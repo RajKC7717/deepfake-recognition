@@ -2,11 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Offscreen Document</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Processor</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: monospace;
+      background: #1a1a1a;
+      color: #00ff00;
+    }
+    #status {
+      margin-bottom: 10px;
+    }
+    video {
+      display: block;
+      max-width: 640px;
+      border: 2px solid #00ff00;
+    }
+    canvas {
+      display: none; /* Hidden - only used for frame extraction */
+    }
+  </style>
 </head>
 <body>
-  <h1>Offscreen Processing</h1>
-  <p>This document processes video in the background.</p>
+  <div id="status">⏸️ Waiting for stream...</div>
+  <video id="video" autoplay muted></video>
+  <canvas id="canvas"></canvas>
   <script src="offscreen.js"></script>
 </body>
 </html>
