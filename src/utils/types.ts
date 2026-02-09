@@ -22,7 +22,12 @@ export enum MessageType {
   
   // From background → popup/content
   STATUS_UPDATE = 'STATUS_UPDATE',
-  DETECTION_RESULT = 'DETECTION_RESULT'
+  DETECTION_RESULT = 'DETECTION_RESULT',
+  
+  // AI Model related
+  MODEL_LOADING = 'MODEL_LOADING',
+  MODEL_READY = 'MODEL_READY',
+  MODEL_ERROR = 'MODEL_ERROR'
 }
 
 export interface CaptureConfig {
@@ -43,4 +48,42 @@ export interface DetectionStatus {
   framesProcessed: number;
   startTime?: number;
   currentTab?: number;
+  modelLoaded?: boolean;
+  averageConfidence?: number;
+}
+
+// AI Detection Result
+export interface DetectionResult {
+  frameNumber: number;
+  timestamp: number;
+  
+  // Overall confidence (0-1, higher = more likely deepfake)
+  confidence: number;
+  
+  // Individual scores
+  visualArtifactScore: number;  // GAN fingerprints
+  temporalScore?: number;        // Frame consistency (needs history)
+  ppgScore?: number;             // Heart rate detection (future)
+  
+  // Face detection
+  faceDetected: boolean;
+  faceCount: number;
+  
+  // Classification
+  classification: 'real' | 'suspicious' | 'fake';
+  threatLevel: 'safe' | 'warning' | 'danger';
+  
+  // Performance metrics
+  inferenceTime: number; // ms
+}
+
+// Model configuration
+export interface ModelConfig {
+  modelPath: string;
+  inputSize: number;
+  threshold: {
+    safe: number;      // < 0.3 = safe
+    warning: number;   // 0.3-0.7 = suspicious
+    danger: number;    // > 0.7 = fake
+  };
 }

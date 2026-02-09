@@ -1,6 +1,11 @@
-import { MessageType, CaptureConfig, FrameData } from '../utils/types';
+import { MessageType, CaptureConfig, DetectionResult } from '../utils/types';
+import { DeepfakeDetectorModel } from '../utils/ai-model';
+import { FaceDetector } from '../utils/face-detector';
+import { createLogger } from '../utils/logger';
 
-console.log('🎬 Offscreen Video Processor Loaded');
+const logger = createLogger('Offscreen');
+
+logger.info('🎬 Offscreen Video Processor Loaded');
 
 // DOM elements
 const video = document.getElementById('video') as HTMLVideoElement;
@@ -8,38 +13,118 @@ const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
 
+// AI Components
+const aiModel = new DeepfakeDetectorModel();
+const faceDetector = new FaceDetector();
+
 // State
 let mediaStream: MediaStream | null = null;
 let captureInterval: number | null = null;
 let config: CaptureConfig | null = null;
 let frameCounter = 0;
+let isInitialized = false;
+let initializationPromise: Promise<void> | null = null;
+
+// Initialize AI models on load
+initializationPromise = initializeAI();
+
+async function initializeAI() {
+  try {
+    updateStatus('⏳ Loading AI models...');
+    
+    logger.info('Initializing AI components...');
+    
+    // Initialize in parallel
+    await Promise.all([
+      aiModel.initialize(),
+      faceDetector.initialize()
+    ]);
+    
+    isInitialized = true;
+    updateStatus('✅ AI Ready - Waiting for stream...');
+    
+    // Notify background that models are ready
+    chrome.runtime.sendMessage({
+      type: MessageType.MODEL_READY,
+      data: { backend: aiModel.getBackend() }
+    }).catch(() => {});
+    
+    logger.info('✅ All AI components initialized');
+    
+  } catch (error) {
+    logger.error('Failed to initialize AI:', error);
+    updateStatus('❌ AI initialization failed');
+    
+    chrome.runtime.sendMessage({
+      type: MessageType.MODEL_ERROR,
+      data: { error: (error as Error).message }
+    }).catch(() => {});
+    
+    throw error;
+  }
+}
 
 // Listen for messages from service worker
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('Offscreen received:', message.type);
+  logger.debug('Offscreen received:', message.type);
   
   switch (message.type) {
     case MessageType.BEGIN_STREAM:
-      beginCapture(message.data.streamId, message.data.config);
-      sendResponse({ success: true });
+      // Wait for initialization before starting capture
+      if (initializationPromise) {
+        initializationPromise
+          .then(() => beginCapture(message.data.streamId, message.data.config))
+          .then(() => {
+            logger.debug('Capture started successfully');
+          })
+          .catch((error) => {
+            logger.error('Capture start failed:', error);
+          });
+      } else if (isInitialized) {
+        beginCapture(message.data.streamId, message.data.config)
+          .then(() => {
+            logger.debug('Capture started successfully');
+          })
+          .catch((error) => {
+            logger.error('Capture start failed:', error);
+          });
+      }
+      sendResponse({ success: true, message: 'Starting capture' });
       break;
       
     case MessageType.END_STREAM:
       endCapture();
-      sendResponse({ success: true });
+      sendResponse({ success: true, message: 'Capture ended' });
       break;
+      
+    case MessageType.GET_STATUS:
+      sendResponse({ 
+        isCapturing: captureInterval !== null,
+        frameCounter,
+        isInitialized
+      });
+      break;
+      
+    default:
+      sendResponse({ success: false, message: 'Unknown message type' });
   }
   
-  return true;
+  return false;
 });
 
 // Begin capturing video stream
 async function beginCapture(streamId: string, captureConfig: CaptureConfig) {
   try {
-    console.log('🎥 Beginning capture with stream ID:', streamId);
+    logger.info('🎥 Beginning capture with stream ID:', streamId);
+    
+    // Double check models are ready
+    if (!isInitialized) {
+      logger.warn('Models not ready yet, waiting...');
+      await initializationPromise;
+    }
+    
     config = captureConfig;
     
-    // Get media stream using the stream ID
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
@@ -47,127 +132,149 @@ async function beginCapture(streamId: string, captureConfig: CaptureConfig) {
           chromeMediaSource: 'tab',
           chromeMediaSourceId: streamId
         }
-      } as any // TypeScript doesn't have types for Chrome-specific constraints
+      } as any
     });
     
-    console.log('✅ Got media stream');
+    logger.info('✅ Got media stream');
     
-    // Attach to video element
     video.srcObject = mediaStream;
     video.play();
     
-    // Wait for video metadata to load
     await new Promise<void>((resolve) => {
       video.onloadedmetadata = () => {
-        console.log(`📺 Video loaded: ${video.videoWidth}x${video.videoHeight}`);
+        logger.info(`📺 Video loaded: ${video.videoWidth}x${video.videoHeight}`);
         resolve();
       };
     });
     
-    // Setup canvas with video dimensions
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     
-    // Update status
-    updateStatus('🔴 CAPTURING');
+    updateStatus('🔴 ANALYZING WITH AI');
     
-    // Start frame extraction
-    startFrameExtraction();
+    startFrameAnalysis();
     
   } catch (error) {
-    console.error('❌ Capture failed:', error);
+    logger.error('❌ Capture failed:', error);
     updateStatus('❌ ERROR: ' + (error as Error).message);
     
-    // Notify background of error
     chrome.runtime.sendMessage({
       type: MessageType.CAPTURE_ERROR,
       data: { error: (error as Error).message }
-    });
+    }).catch(() => {});
   }
 }
 
-// Start extracting frames at configured FPS
-function startFrameExtraction() {
+function startFrameAnalysis() {
   if (!config) return;
   
-  const intervalMs = 1000 / config.fps; // Convert FPS to milliseconds
+  const intervalMs = 1000 / config.fps;
   
-  console.log(`⏱️ Extracting frames every ${intervalMs}ms (${config.fps} FPS)`);
+  logger.info(`⏱️ Analyzing frames every ${intervalMs}ms (${config.fps} FPS)`);
   
   captureInterval = window.setInterval(() => {
-    extractFrame();
+    analyzeFrame();
   }, intervalMs);
 }
 
-// Extract a single frame from video
-function extractFrame() {
+async function analyzeFrame() {
   if (!video.videoWidth || !video.videoHeight) {
-    console.warn('Video not ready yet');
     return;
   }
   
   frameCounter++;
   
-  // Draw current video frame to canvas
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  
-  // Get image data (RGBA pixel array)
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  
-  // Convert to base64 for easier transfer
-  // (In production, you might want to send raw ImageData or use OffscreenCanvas)
-  const base64Image = canvas.toDataURL('image/jpeg', 0.8); // 80% quality
-  
-  // Create frame data
-  const frameData: FrameData = {
-    imageData: base64Image,
-    timestamp: Date.now(),
-    tabId: config!.targetTabId,
-    frameNumber: frameCounter
-  };
-  
-  // Send to background for processing
-  chrome.runtime.sendMessage({
-    type: MessageType.FRAME_CAPTURED,
-    data: frameData
-  });
-  
-  // Update status every 30 frames
-  if (frameCounter % 30 === 0) {
-    updateStatus(`🔴 CAPTURING - Frame ${frameCounter}`);
+  try {
+    // Detect face (BlazeFace is async)
+    const faceResult = await faceDetector.detectFaces(video);
+    
+    if (!faceResult.detected) {
+      sendDetectionResult({
+        frameNumber: frameCounter,
+        timestamp: Date.now(),
+        confidence: 0,
+        visualArtifactScore: 0,
+        faceDetected: false,
+        faceCount: 0,
+        classification: 'real',
+        threatLevel: 'safe',
+        inferenceTime: 0
+      });
+      return;
+    }
+    
+    const aiResult = await aiModel.detect(faceResult.croppedFace!);
+    
+    const classification = classifyThreat(aiResult.confidence);
+    
+    const result: DetectionResult = {
+      frameNumber: frameCounter,
+      timestamp: Date.now(),
+      confidence: aiResult.confidence,
+      visualArtifactScore: aiResult.visualArtifactScore,
+      faceDetected: true,
+      faceCount: faceResult.count,
+      classification: classification.type,
+      threatLevel: classification.level,
+      inferenceTime: aiResult.inferenceTime
+    };
+    
+    sendDetectionResult(result);
+    
+    if (frameCounter % 10 === 0) {
+      const confidence = (aiResult.confidence * 100).toFixed(1);
+      updateStatus(`🔴 Frame ${frameCounter} | Confidence: ${confidence}% | ${aiResult.inferenceTime.toFixed(0)}ms`);
+    }
+    
+  } catch (error) {
+    logger.error('Frame analysis error:', error);
   }
 }
 
-// End capture and cleanup
+function classifyThreat(confidence: number): { 
+  type: 'real' | 'suspicious' | 'fake';
+  level: 'safe' | 'warning' | 'danger';
+} {
+  if (confidence < 0.3) {
+    return { type: 'real', level: 'safe' };
+  } else if (confidence < 0.7) {
+    return { type: 'suspicious', level: 'warning' };
+  } else {
+    return { type: 'fake', level: 'danger' };
+  }
+}
+
+function sendDetectionResult(result: DetectionResult) {
+  chrome.runtime.sendMessage({
+    type: MessageType.FRAME_CAPTURED,
+    data: result
+  }).catch(() => {});
+}
+
 function endCapture() {
-  console.log('🛑 Ending capture');
+  logger.info('🛑 Ending capture');
   
-  // Stop interval
   if (captureInterval) {
     clearInterval(captureInterval);
     captureInterval = null;
   }
   
-  // Stop media stream
   if (mediaStream) {
     mediaStream.getTracks().forEach(track => track.stop());
     mediaStream = null;
   }
   
-  // Clear video
   video.srcObject = null;
-  
-  // Reset state
   frameCounter = 0;
   config = null;
   
   updateStatus('⏸️ Stopped');
 }
 
-// Update status display
 function updateStatus(text: string) {
   statusDiv.textContent = text;
 }
 
-// Initial status
-updateStatus('⏸️ Ready');
+if (!isInitialized) {
+  updateStatus('⏳ Initializing AI...');
+}

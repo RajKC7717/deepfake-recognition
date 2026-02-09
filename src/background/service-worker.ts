@@ -1,4 +1,4 @@
-import { MessageType, DetectionStatus, CaptureConfig } from '../utils/types';
+import { MessageType, DetectionStatus, CaptureConfig, DetectionResult } from '../utils/types';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('Background');
@@ -6,7 +6,8 @@ const logger = createLogger('Background');
 // Global state
 let detectionStatus: DetectionStatus = {
   isCapturing: false,
-  framesProcessed: 0
+  framesProcessed: 0,
+  modelLoaded: false
 };
 
 let offscreenDocumentExists = false;
@@ -24,7 +25,6 @@ chrome.action.onClicked.addListener(async (tab) => {
   
   // Check if on supported site
   if (!tab.url?.includes('meet.google.com')) {
-    // Show notification
     chrome.notifications?.create({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
@@ -47,44 +47,38 @@ async function startCapture(tabId: number) {
   logger.info('🎥 Starting capture for tab:', tabId);
   
   try {
-    // Step 1: Create offscreen document if needed
     await ensureOffscreenDocument();
     
-    // Step 2: Request tab capture permission and get stream ID
     const streamId = await chrome.tabCapture.getMediaStreamId({
       targetTabId: tabId
     });
     
     logger.info('✅ Got stream ID:', streamId);
     
-    // Step 3: Configure capture settings
     const config: CaptureConfig = {
       targetTabId: tabId,
       fps: 5,
       quality: 'medium'
     };
     
-    // Step 4: Send to offscreen document to begin capture
     chrome.runtime.sendMessage({
       type: MessageType.BEGIN_STREAM,
       data: { streamId, config }
     }).catch((error) => {
-      logger.warn('Could not send to offscreen (might not be ready yet):', error.message);
+      logger.warn('Could not send to offscreen:', error.message);
     });
     
-    // Update status
     detectionStatus = {
       isCapturing: true,
       framesProcessed: 0,
       startTime: Date.now(),
-      currentTab: tabId
+      currentTab: tabId,
+      modelLoaded: false
     };
     
-    // Update extension icon
     chrome.action.setIcon({ path: 'icons/icon48.png' });
     chrome.action.setTitle({ title: 'Deepfake Detector - ACTIVE' });
     
-    // CRITICAL: Wait a bit for content script to be ready, then notify
     logger.info('Notifying content script to show overlay...');
     
     setTimeout(() => {
@@ -96,20 +90,16 @@ async function startCapture(tabId: number) {
       }).catch((error) => {
         logger.error('❌ Failed to notify content script:', error);
         
-        // Try injecting content script if it's not loaded
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           files: ['content-script.js']
         }).then(() => {
-          logger.info('Content script injected, retrying notification...');
+          logger.info('Content script injected, retrying...');
           
-          // Retry notification after injection
           setTimeout(() => {
             chrome.tabs.sendMessage(tabId, {
               type: MessageType.STATUS_UPDATE,
               data: { status: 'active' }
-            }).then(() => {
-              logger.info('✅ Retry successful');
             }).catch((err) => {
               logger.error('❌ Retry failed:', err);
             });
@@ -118,7 +108,7 @@ async function startCapture(tabId: number) {
           logger.error('Failed to inject content script:', injectionError);
         });
       });
-    }, 100); // Small delay to ensure content script is ready
+    }, 100);
     
   } catch (error) {
     logger.error('❌ Failed to start capture:', error);
@@ -130,25 +120,22 @@ async function startCapture(tabId: number) {
 async function stopCapture() {
   logger.info('🛑 Stopping capture');
   
-  // Send to offscreen document
   chrome.runtime.sendMessage({
     type: MessageType.END_STREAM
   }).catch(() => {
-    // Offscreen might be closed, that's fine
     logger.debug('Offscreen document may already be closed');
   });
   
   const currentTab = detectionStatus.currentTab;
   
-  // Update status
   detectionStatus = {
     isCapturing: false,
-    framesProcessed: detectionStatus.framesProcessed
+    framesProcessed: detectionStatus.framesProcessed,
+    modelLoaded: detectionStatus.modelLoaded
   };
   
   chrome.action.setTitle({ title: 'Deepfake Detector - Click to Start' });
   
-  // IMPORTANT: Notify content script to hide overlay
   if (currentTab) {
     chrome.tabs.sendMessage(currentTab, {
       type: MessageType.STATUS_UPDATE,
@@ -161,12 +148,10 @@ async function stopCapture() {
 
 // Ensure offscreen document exists
 async function ensureOffscreenDocument() {
-  // Check if already exists
   if (offscreenDocumentExists) {
     return;
   }
   
-  // Check if any offscreen documents exist
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType]
   });
@@ -177,7 +162,6 @@ async function ensureOffscreenDocument() {
     return;
   }
   
-  // Create new offscreen document
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
     reasons: ['USER_MEDIA' as chrome.offscreen.Reason],
@@ -188,93 +172,130 @@ async function ensureOffscreenDocument() {
   logger.info('✅ Offscreen document created');
 }
 
-// Listen for messages from offscreen document and popup
+// Listen for messages
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   logger.debug('Background received message:', message.type);
   
-  switch (message.type) {
-    case MessageType.GET_STATUS:
-      sendResponse(detectionStatus);
-      break;
-      
-    case MessageType.FRAME_CAPTURED:
-      // Frame successfully captured
-      detectionStatus.framesProcessed++;
-      
-      logger.debug('Frame captured:', detectionStatus.framesProcessed);
-      
-      // Send to popup if it's open
-      chrome.runtime.sendMessage({
-        type: MessageType.DETECTION_RESULT,
-        data: {
-          frameNumber: detectionStatus.framesProcessed,
-          timestamp: message.data.timestamp,
-          // Will add: confidence, artifactScore, ppgScore in Chunk 3
+  // Handle each message type
+  try {
+    switch (message.type) {
+      case MessageType.GET_STATUS:
+        sendResponse(detectionStatus);
+        return false; // Synchronous response
+        
+      case MessageType.MODEL_READY:
+        logger.info('✅ AI models loaded:', message.data);
+        detectionStatus.modelLoaded = true;
+        
+        // Notify popup
+        chrome.runtime.sendMessage({
+          type: MessageType.MODEL_READY,
+          data: message.data
+        }).catch(() => {});
+        
+        sendResponse({ received: true });
+        return false;
+        
+      case MessageType.MODEL_ERROR:
+        logger.error('❌ Model loading error:', message.data);
+        sendResponse({ received: true });
+        return false;
+        
+      case MessageType.FRAME_CAPTURED:
+        // Frame successfully captured and analyzed by AI
+        detectionStatus.framesProcessed++;
+        
+        const result = message.data as DetectionResult;
+        
+        logger.debug(`Frame ${detectionStatus.framesProcessed}: ${result.classification} (${(result.confidence * 100).toFixed(1)}%)`);
+        
+        // Calculate running average confidence
+        if (!detectionStatus.averageConfidence) {
+          detectionStatus.averageConfidence = result.confidence;
+        } else {
+          detectionStatus.averageConfidence = 
+            (detectionStatus.averageConfidence * 0.9) + (result.confidence * 0.1);
         }
-      }).catch(() => {
-        // Popup might be closed, that's fine
-      });
-      
-      // IMPORTANT: Also send to content script for overlay update
-      if (detectionStatus.currentTab) {
-        chrome.tabs.sendMessage(detectionStatus.currentTab, {
+        
+        // Send to popup
+        chrome.runtime.sendMessage({
           type: MessageType.DETECTION_RESULT,
-          data: {
-            frameNumber: detectionStatus.framesProcessed,
-            timestamp: message.data.timestamp,
-          }
-        }).catch((error) => {
-          // Content script might not be ready yet
-          logger.debug('Could not send to content script:', error.message);
+          data: result
+        }).catch(() => {});
+        
+        // Send to content script
+        if (detectionStatus.currentTab) {
+          chrome.tabs.sendMessage(detectionStatus.currentTab, {
+            type: MessageType.DETECTION_RESULT,
+            data: result
+          }).catch((error) => {
+            logger.debug('Could not send to content script:', error.message);
+          });
+        }
+        
+        // Log warnings
+        if (result.threatLevel === 'danger') {
+          logger.warn(`🚨 DEEPFAKE DETECTED! Confidence: ${(result.confidence * 100).toFixed(1)}%`);
+        } else if (result.threatLevel === 'warning') {
+          logger.warn(`⚠️ Suspicious activity. Confidence: ${(result.confidence * 100).toFixed(1)}%`);
+        }
+        
+        sendResponse({ received: true });
+        return false;
+        
+      case MessageType.CAPTURE_ERROR:
+        logger.error('Capture error:', message.data);
+        stopCapture();
+        sendResponse({ received: true });
+        return false;
+        
+      case MessageType.START_CAPTURE:
+        if (message.data?.tabId) {
+          startCapture(message.data.tabId).then(() => {
+            sendResponse({ success: true });
+          }).catch((error) => {
+            sendResponse({ success: false, error: error.message });
+          });
+          return true; // Will respond asynchronously
+        }
+        sendResponse({ success: false, error: 'No tab ID' });
+        return false;
+        
+      case MessageType.STOP_CAPTURE:
+        stopCapture().then(() => {
+          sendResponse({ success: true });
         });
-      }
-      break;
-      
-    case MessageType.CAPTURE_ERROR:
-      logger.error('Capture error:', message.data);
-      stopCapture();
-      break;
-      
-    case MessageType.START_CAPTURE:
-      if (message.data?.tabId) {
-        startCapture(message.data.tabId);
-      }
-      sendResponse({ success: true });
-      break;
-      
-    case MessageType.STOP_CAPTURE:
-      stopCapture();
-      sendResponse({ success: true });
-      break;
-      
-    default:
-      logger.debug('Unknown message type:', message.type);
+        return true; // Will respond asynchronously
+        
+      default:
+        logger.debug('Unknown message type:', message.type);
+        sendResponse({ success: false, error: 'Unknown message type' });
+        return false;
+    }
+  } catch (error) {
+    logger.error('Error handling message:', error);
+    sendResponse({ success: false, error: (error as Error).message });
+    return false;
   }
-  
-  return true; // Keep channel open for async responses
 });
 
 // Extension installed
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
     logger.info('✅ Deepfake Detector installed!');
-    
-    // Open welcome page (optional)
-    chrome.tabs.create({
-      url: 'https://meet.google.com/'
-    });
+    chrome.tabs.create({ url: 'https://meet.google.com/' });
   } else if (details.reason === 'update') {
     logger.info('🔄 Extension updated to version', chrome.runtime.getManifest().version);
   }
 });
 
-// Clean up when extension unloads
+// Clean up
 chrome.runtime.onSuspend.addListener(() => {
   logger.info('Extension suspending, cleaning up...');
   stopCapture();
 });
 
-// Handle when tabs are closed
+// Handle tab closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (detectionStatus.currentTab === tabId && detectionStatus.isCapturing) {
     logger.info('Active tab closed, stopping capture');
@@ -282,7 +303,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
-// Handle when tab URL changes (user navigates away from Meet)
+// Handle navigation away
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (detectionStatus.currentTab === tabId && 
       detectionStatus.isCapturing && 
