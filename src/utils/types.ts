@@ -27,17 +27,31 @@ export enum MessageType {
   // AI Model related
   MODEL_LOADING = 'MODEL_LOADING',
   MODEL_READY = 'MODEL_READY',
-  MODEL_ERROR = 'MODEL_ERROR'
+  MODEL_ERROR = 'MODEL_ERROR',
+  
+  // Video detection messages
+  VIDEO_DETECTED = 'VIDEO_DETECTED',
+  VIDEO_LOST = 'VIDEO_LOST',
+  UPDATE_VIDEO_REGION = 'UPDATE_VIDEO_REGION'
+}
+
+export interface VideoRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isPlaying: boolean;
 }
 
 export interface CaptureConfig {
   targetTabId: number;
-  fps: number; // Frames per second to analyze (not capture)
+  fps: number;
   quality: 'low' | 'medium' | 'high';
+  videoRegion?: VideoRegion; // Optional video region to focus on
 }
 
 export interface FrameData {
-  imageData: string; // Base64 encoded image
+  imageData: string;
   timestamp: number;
   tabId: number;
   frameNumber: number;
@@ -50,40 +64,29 @@ export interface DetectionStatus {
   currentTab?: number;
   modelLoaded?: boolean;
   averageConfidence?: number;
+  videoRegionDetected?: boolean; // NEW
 }
 
-// AI Detection Result
 export interface DetectionResult {
   frameNumber: number;
   timestamp: number;
-  
-  // Overall confidence (0-1, higher = more likely deepfake)
   confidence: number;
-  
-  // Individual scores
-  visualArtifactScore: number;  // GAN fingerprints
-  temporalScore?: number;        // Frame consistency (needs history)
-  ppgScore?: number;             // Heart rate detection (future)
-  
-  // Face detection
+  visualArtifactScore: number;
+  temporalScore?: number;
+  ppgScore?: number;
   faceDetected: boolean;
   faceCount: number;
-  
-  // Classification
   classification: 'real' | 'suspicious' | 'fake';
   threatLevel: 'safe' | 'warning' | 'danger';
-  
-  // Performance metrics
-  inferenceTime: number; // ms
+  inferenceTime: number;
 }
 
-// Model configuration
 export interface ModelConfig {
   modelPath: string;
   inputSize: number;
   threshold: {
-    safe: number;      // < 0.3 = safe
-    warning: number;   // 0.3-0.7 = suspicious
-    danger: number;    // > 0.7 = fake
+    safe: number;
+    warning: number;
+    danger: number;
   };
 }

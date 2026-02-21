@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deepfake Detector — Settings</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #0f172a;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 640px;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 36px;
+    }
+    .header-icon { font-size: 32px; }
+    .header h1  { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+    .header p   { font-size: 13px; color: #64748b; margin-top: 2px; }
+
+    /* Sections */
+    .section {
+      background: #1e293b;
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 16px;
+    }
+
+    /* Setting row */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-size: 14px; font-weight: 500; }
+    .setting-desc  { font-size: 12px; color: #64748b; margin-top: 2px; }
+
+    /* Toggle switch */
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #334155;
+      border-radius: 24px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .slider::before {
+      content: "";
+      position: absolute;
+      height: 18px; width: 18px;
+      left: 3px; bottom: 3px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    input:checked + .slider             { background: #10b981; }
+    input:checked + .slider::before     { transform: translateX(20px); }
+
+    /* Slider input */
+    .range-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 200px;
+    }
+    .range-wrapper input[type=range] {
+      flex: 1;
+      accent-color: #10b981;
+      cursor: pointer;
+    }
+    .range-value {
+      font-size: 13px;
+      font-weight: 700;
+      color: #10b981;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    /* Select */
+    select {
+      background: #0f172a;
+      color: #f1f5f9;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+    select:focus { border-color: #10b981; }
+
+    /* Save button */
+    .save-btn {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: filter 0.2s, transform 0.1s;
+      box-shadow: 0 4px 16px rgba(16,185,129,0.25);
+    }
+    .save-btn:hover  { filter: brightness(1.08); }
+    .save-btn:active { transform: scale(0.98); }
+
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: #10b981;
+      color: white;
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      opacity: 0;
+      transition: transform 0.3s, opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Privacy policy link */
+    .footer {
+      text-align: center;
+      margin-top: 28px;
+      font-size: 12px;
+      color: #475569;
+    }
+    .footer a { color: #6366f1; text-decoration: none; }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <div class="header">
+      <span class="header-icon">🛡️</span>
+      <div>
+        <h1>Deepfake Detector</h1>
+        <p>Configure detection sensitivity and privacy settings</p>
+      </div>
+    </div>
+
+    <!-- Detection Settings -->
+    <div class="section">
+      <div class="section-title">Detection</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Sensitivity</div>
+          <div class="setting-desc">Higher = catches more deepfakes, more false positives</div>
+        </div>
+        <div class="range-wrapper">
+          <input type="range" id="sensitivity" min="1" max="10" step="1" value="5">
+          <span class="range-value" id="sensitivity-val">5</span>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Analysis FPS</div>
+          <div class="setting-desc">Frames per second to analyze (lower = faster battery)</div>
+        </div>
+        <select id="fps">
+          <option value="2">2 fps — Low</option>
+          <option value="5" selected>5 fps — Balanced</option>
+          <option value="10">10 fps — Thorough</option>
+          <option value="15">15 fps — Maximum</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Capture Quality</div>
+          <div class="setting-desc">Higher quality = more accurate but slower</div>
+        </div>
+        <select id="quality">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Auto-start on Meet</div>
+          <div class="setting-desc">Begin detection when you join a call</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="auto-start">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Privacy Settings -->
+    <div class="section">
+      <div class="section-title">Privacy</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">All Processing On-Device</div>
+          <div class="setting-desc">Video never leaves your browser (always on)</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="on-device" checked disabled>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Backend Validator</div>
+          <div class="setting-desc">Enable server-side deep analysis (see backend docs)</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="backend-enabled">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row" id="backend-url-row" style="display:none;">
+        <div>
+          <div class="setting-label">Backend URL</div>
+          <div class="setting-desc">Your self-hosted FastAPI endpoint</div>
+        </div>
+        <input
+          type="text"
+          id="backend-url"
+          placeholder="http://localhost:8000"
+          style="
+            background: #0f172a;
+            color: #f1f5f9;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            width: 200px;
+          "
+        >
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Anonymous Usage Stats</div>
+          <div class="setting-desc">Share aggregate detection counts (no video data)</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="analytics">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div class="section">
+      <div class="section-title">Notifications</div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Alert on Deepfake Detected</div>
+          <div class="setting-desc">Show browser notification for high-threat frames</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notify-danger" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="setting-row">
+        <div>
+          <div class="setting-label">Alert on Suspicious Activity</div>
+          <div class="setting-desc">Show notification for medium-threat warnings</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="notify-warning">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Save -->
+    <button class="save-btn" id="save-btn">Save Settings</button>
+
+    <div class="footer">
+      <a href="privacy.html" target="_blank">Privacy Policy</a> · v0.2.0 · Made with ❤️ for safer video calls
+    </div>
+  </div>
+
+  <div class="toast" id="toast">✅ Settings saved!</div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

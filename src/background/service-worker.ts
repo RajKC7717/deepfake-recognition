@@ -1,40 +1,54 @@
-import { MessageType, DetectionStatus, CaptureConfig, DetectionResult } from '../utils/types';
+import { MessageType, DetectionStatus, CaptureConfig, DetectionResult, VideoRegion } from '../utils/types';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('Background');
 
-// Global state
+// ─── Global state ─────────────────────────────────────────────────────────────
+
 let detectionStatus: DetectionStatus = {
-  isCapturing: false,
-  framesProcessed: 0,
-  modelLoaded: false
+  isCapturing:          false,
+  framesProcessed:      0,
+  modelLoaded:          false,
+  videoRegionDetected:  false,
 };
 
 let offscreenDocumentExists = false;
+let currentVideoRegion: VideoRegion | null = null;
+
+// User settings (loaded from chrome.storage on boot)
+let userSettings = {
+  fps:            5,
+  quality:        'medium' as 'low' | 'medium' | 'high',
+  backendEnabled: false,
+  backendUrl:     'http://localhost:8000',
+  notifyDanger:   true,
+  notifyWarning:  false,
+  autoStart:      false,
+};
 
 logger.info('🛡️ Deepfake Detector Service Worker Loaded');
 
-// Handle extension icon click
+// Load settings on boot
+chrome.storage.sync.get(userSettings, (stored) => {
+  Object.assign(userSettings, stored);
+  logger.info('Settings loaded:', userSettings);
+});
+
+// ─── Extension icon click ─────────────────────────────────────────────────────
+
 chrome.action.onClicked.addListener(async (tab) => {
-  logger.debug('Extension clicked on tab:', tab.id);
-  
-  if (!tab.id) {
-    logger.error('No tab ID available');
-    return;
-  }
-  
-  // Check if on supported site
+  if (!tab.id) return;
+
   if (!tab.url?.includes('meet.google.com')) {
     chrome.notifications?.create({
-      type: 'basic',
+      type:    'basic',
       iconUrl: 'icons/icon48.png',
-      title: 'Deepfake Detector',
-      message: 'Please open a Google Meet call first. This extension works on meet.google.com'
+      title:   'Deepfake Detector',
+      message: 'Please open a Google Meet call first.',
     });
     return;
   }
-  
-  // Toggle capture
+
   if (detectionStatus.isCapturing) {
     await stopCapture();
   } else {
@@ -42,274 +56,299 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Start video capture
+// ─── Start / Stop ─────────────────────────────────────────────────────────────
+
 async function startCapture(tabId: number) {
   logger.info('🎥 Starting capture for tab:', tabId);
-  
+
   try {
     await ensureOffscreenDocument();
-    
-    const streamId = await chrome.tabCapture.getMediaStreamId({
-      targetTabId: tabId
-    });
-    
-    logger.info('✅ Got stream ID:', streamId);
-    
+
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    logger.info('Got stream ID:', streamId);
+
     const config: CaptureConfig = {
-      targetTabId: tabId,
-      fps: 5,
-      quality: 'medium'
+      targetTabId:  tabId,
+      fps:          userSettings.fps,
+      quality:      userSettings.quality,
+      videoRegion:  currentVideoRegion ?? undefined,
     };
-    
+
     chrome.runtime.sendMessage({
       type: MessageType.BEGIN_STREAM,
-      data: { streamId, config }
-    }).catch((error) => {
-      logger.warn('Could not send to offscreen:', error.message);
-    });
-    
+      data: { streamId, config },
+    }).catch((err) => logger.warn('Could not send BEGIN_STREAM:', err.message));
+
     detectionStatus = {
-      isCapturing: true,
-      framesProcessed: 0,
-      startTime: Date.now(),
-      currentTab: tabId,
-      modelLoaded: false
+      isCapturing:         true,
+      framesProcessed:     0,
+      startTime:           Date.now(),
+      currentTab:          tabId,
+      modelLoaded:         detectionStatus.modelLoaded,
+      videoRegionDetected: currentVideoRegion !== null,
     };
-    
-    chrome.action.setIcon({ path: 'icons/icon48.png' });
-    chrome.action.setTitle({ title: 'Deepfake Detector - ACTIVE' });
-    
-    logger.info('Notifying content script to show overlay...');
-    
-    setTimeout(() => {
-      chrome.tabs.sendMessage(tabId, {
-        type: MessageType.STATUS_UPDATE,
-        data: { status: 'active' }
-      }).then(() => {
-        logger.info('✅ Content script notified successfully');
-      }).catch((error) => {
-        logger.error('❌ Failed to notify content script:', error);
-        
-        chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          files: ['content-script.js']
-        }).then(() => {
-          logger.info('Content script injected, retrying...');
-          
-          setTimeout(() => {
-            chrome.tabs.sendMessage(tabId, {
-              type: MessageType.STATUS_UPDATE,
-              data: { status: 'active' }
-            }).catch((err) => {
-              logger.error('❌ Retry failed:', err);
-            });
-          }, 100);
-        }).catch((injectionError) => {
-          logger.error('Failed to inject content script:', injectionError);
-        });
-      });
-    }, 100);
-    
+
+    chrome.action.setTitle({ title: 'Deepfake Detector — ACTIVE' });
+
+    // Notify content script with retry
+    setTimeout(() => notifyContentScript(tabId, 'active'), 100);
+
   } catch (error) {
     logger.error('❌ Failed to start capture:', error);
     detectionStatus.isCapturing = false;
   }
 }
 
-// Stop video capture
 async function stopCapture() {
   logger.info('🛑 Stopping capture');
-  
-  chrome.runtime.sendMessage({
-    type: MessageType.END_STREAM
-  }).catch(() => {
-    logger.debug('Offscreen document may already be closed');
-  });
-  
-  const currentTab = detectionStatus.currentTab;
-  
+
+  chrome.runtime.sendMessage({ type: MessageType.END_STREAM }).catch(() => {});
+
+  const prevTab = detectionStatus.currentTab;
+
   detectionStatus = {
-    isCapturing: false,
-    framesProcessed: detectionStatus.framesProcessed,
-    modelLoaded: detectionStatus.modelLoaded
+    isCapturing:         false,
+    framesProcessed:     detectionStatus.framesProcessed,
+    modelLoaded:         detectionStatus.modelLoaded,
+    videoRegionDetected: currentVideoRegion !== null,
   };
-  
-  chrome.action.setTitle({ title: 'Deepfake Detector - Click to Start' });
-  
-  if (currentTab) {
-    chrome.tabs.sendMessage(currentTab, {
+
+  chrome.action.setTitle({ title: 'Deepfake Detector — Click to Start' });
+
+  if (prevTab) {
+    chrome.tabs.sendMessage(prevTab, {
       type: MessageType.STATUS_UPDATE,
-      data: { status: 'stopped' }
-    }).catch((error) => {
-      logger.debug('Could not notify content script:', error.message);
-    });
+      data: { status: 'stopped' },
+    }).catch(() => {});
   }
 }
 
-// Ensure offscreen document exists
+async function notifyContentScript(tabId: number, status: 'active' | 'stopped') {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type: MessageType.STATUS_UPDATE,
+      data: { status },
+    });
+    logger.info('✅ Content script notified:', status);
+  } catch {
+    // Content script not injected yet — inject it
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content-script.js'] });
+      setTimeout(() => {
+        chrome.tabs.sendMessage(tabId, {
+          type: MessageType.STATUS_UPDATE,
+          data: { status },
+        }).catch(() => {});
+      }, 150);
+    } catch (injErr) {
+      logger.error('Failed to inject content script:', injErr);
+    }
+  }
+}
+
 async function ensureOffscreenDocument() {
-  if (offscreenDocumentExists) {
-    return;
-  }
-  
-  const existingContexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType]
+  if (offscreenDocumentExists) return;
+
+  const existing = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT' as chrome.runtime.ContextType],
   });
-  
-  if (existingContexts.length > 0) {
+
+  if (existing.length > 0) {
     offscreenDocumentExists = true;
-    logger.debug('Offscreen document already exists');
     return;
   }
-  
+
   await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['USER_MEDIA' as chrome.offscreen.Reason],
-    justification: 'Processing video stream for deepfake detection'
+    url:          'offscreen.html',
+    reasons:      ['USER_MEDIA' as chrome.offscreen.Reason],
+    justification:'Processing video stream for deepfake detection',
   });
-  
+
   offscreenDocumentExists = true;
   logger.info('✅ Offscreen document created');
 }
 
-// Listen for messages
+// ─── Message listener (single, consolidated) ──────────────────────────────────
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  logger.debug('Background received message:', message.type);
-  
-  // Handle each message type
+  logger.debug('Message received:', message.type);
+
   try {
     switch (message.type) {
+
+      // ── Popup asking for current status ─────────────────────────────────
       case MessageType.GET_STATUS:
         sendResponse(detectionStatus);
-        return false; // Synchronous response
-        
-      case MessageType.MODEL_READY:
-        logger.info('✅ AI models loaded:', message.data);
-        detectionStatus.modelLoaded = true;
-        
-        // Notify popup
-        chrome.runtime.sendMessage({
-          type: MessageType.MODEL_READY,
-          data: message.data
-        }).catch(() => {});
-        
-        sendResponse({ received: true });
         return false;
-        
-      case MessageType.MODEL_ERROR:
-        logger.error('❌ Model loading error:', message.data);
-        sendResponse({ received: true });
-        return false;
-        
-      case MessageType.FRAME_CAPTURED:
-        // Frame successfully captured and analyzed by AI
-        detectionStatus.framesProcessed++;
-        
-        const result = message.data as DetectionResult;
-        
-        logger.debug(`Frame ${detectionStatus.framesProcessed}: ${result.classification} (${(result.confidence * 100).toFixed(1)}%)`);
-        
-        // Calculate running average confidence
-        if (!detectionStatus.averageConfidence) {
-          detectionStatus.averageConfidence = result.confidence;
-        } else {
-          detectionStatus.averageConfidence = 
-            (detectionStatus.averageConfidence * 0.9) + (result.confidence * 0.1);
+
+      // ── Popup: start capture ─────────────────────────────────────────────
+      case MessageType.START_CAPTURE:
+        if (message.data?.tabId) {
+          startCapture(message.data.tabId)
+            .then(() => sendResponse({ success: true }))
+            .catch((err) => sendResponse({ success: false, error: err.message }));
+          return true; // async
         }
-        
-        // Send to popup
-        chrome.runtime.sendMessage({
-          type: MessageType.DETECTION_RESULT,
-          data: result
-        }).catch(() => {});
-        
-        // Send to content script
+        sendResponse({ success: false, error: 'No tab ID' });
+        return false;
+
+      // ── Popup: stop capture ──────────────────────────────────────────────
+      case MessageType.STOP_CAPTURE:
+        stopCapture().then(() => sendResponse({ success: true }));
+        return true; // async
+
+      // ── Content script: video detected ───────────────────────────────────
+      case MessageType.VIDEO_DETECTED:
+        currentVideoRegion = message.data as VideoRegion;
+        detectionStatus.videoRegionDetected = true;
+        logger.info('✅ Video region:', `${currentVideoRegion.width}x${currentVideoRegion.height}`);
+
+        if (detectionStatus.isCapturing) {
+          chrome.runtime.sendMessage({
+            type: MessageType.UPDATE_VIDEO_REGION,
+            data: currentVideoRegion,
+          }).catch(() => {});
+        }
+        sendResponse({ received: true });
+        return false;
+
+      // ── Content script: video lost ───────────────────────────────────────
+      case MessageType.VIDEO_LOST:
+        logger.warn('⚠️ Video lost');
+        currentVideoRegion = null;
+        detectionStatus.videoRegionDetected = false;
+        sendResponse({ received: true });
+        return false;
+
+      // ── Offscreen: models ready ──────────────────────────────────────────
+      case MessageType.MODEL_READY:
+        logger.info('✅ Models ready:', message.data);
+        detectionStatus.modelLoaded = true;
+        // Forward to popup
+        chrome.runtime.sendMessage({ type: MessageType.MODEL_READY, data: message.data }).catch(() => {});
+        sendResponse({ received: true });
+        return false;
+
+      case MessageType.MODEL_ERROR:
+        logger.error('❌ Model error:', message.data);
+        sendResponse({ received: true });
+        return false;
+
+      // ── Offscreen: frame analyzed ────────────────────────────────────────
+      case MessageType.FRAME_CAPTURED: {
+        detectionStatus.framesProcessed++;
+        const result = message.data as DetectionResult;
+
+        detectionStatus.averageConfidence = detectionStatus.averageConfidence === undefined
+          ? result.confidence
+          : detectionStatus.averageConfidence * 0.9 + result.confidence * 0.1;
+
+        // Forward to popup
+        chrome.runtime.sendMessage({ type: MessageType.DETECTION_RESULT, data: result }).catch(() => {});
+
+        // Forward to content script overlay
         if (detectionStatus.currentTab) {
           chrome.tabs.sendMessage(detectionStatus.currentTab, {
             type: MessageType.DETECTION_RESULT,
-            data: result
-          }).catch((error) => {
-            logger.debug('Could not send to content script:', error.message);
+            data: result,
+          }).catch(() => {});
+        }
+
+        // Show notification if needed
+        if (result.threatLevel === 'danger' && userSettings.notifyDanger) {
+          chrome.notifications?.create({
+            type:    'basic',
+            iconUrl: 'icons/icon48.png',
+            title:   '🚨 Deepfake Detected!',
+            message: `Confidence: ${(result.confidence * 100).toFixed(0)}% — Video may be AI-generated.`,
+          });
+        } else if (result.threatLevel === 'warning' && userSettings.notifyWarning) {
+          chrome.notifications?.create({
+            type:    'basic',
+            iconUrl: 'icons/icon48.png',
+            title:   '⚠️ Suspicious Activity',
+            message: `Authenticity score: ${((1 - result.confidence) * 100).toFixed(0)}%`,
           });
         }
-        
-        // Log warnings
-        if (result.threatLevel === 'danger') {
-          logger.warn(`🚨 DEEPFAKE DETECTED! Confidence: ${(result.confidence * 100).toFixed(1)}%`);
-        } else if (result.threatLevel === 'warning') {
-          logger.warn(`⚠️ Suspicious activity. Confidence: ${(result.confidence * 100).toFixed(1)}%`);
-        }
-        
+
         sendResponse({ received: true });
         return false;
-        
+      }
+
+      // ── Offscreen: capture error ─────────────────────────────────────────
       case MessageType.CAPTURE_ERROR:
         logger.error('Capture error:', message.data);
         stopCapture();
         sendResponse({ received: true });
         return false;
-        
-      case MessageType.START_CAPTURE:
-        if (message.data?.tabId) {
-          startCapture(message.data.tabId).then(() => {
-            sendResponse({ success: true });
-          }).catch((error) => {
-            sendResponse({ success: false, error: error.message });
-          });
-          return true; // Will respond asynchronously
-        }
-        sendResponse({ success: false, error: 'No tab ID' });
-        return false;
-        
-      case MessageType.STOP_CAPTURE:
-        stopCapture().then(() => {
-          sendResponse({ success: true });
+
+      // ── Content script: check video (direct query) ───────────────────────
+      case 'CHECK_VIDEO':
+        sendResponse({
+          videoDetected: currentVideoRegion !== null,
+          region:        currentVideoRegion,
         });
-        return true; // Will respond asynchronously
-        
+        return false;
+
+      // ── Settings page: settings updated ─────────────────────────────────
+      case 'SETTINGS_UPDATED':
+        Object.assign(userSettings, message.data);
+        logger.info('Settings updated:', userSettings);
+        sendResponse({ received: true });
+        return false;
+
       default:
         logger.debug('Unknown message type:', message.type);
-        sendResponse({ success: false, error: 'Unknown message type' });
+        sendResponse({ success: false, error: 'Unknown type' });
         return false;
     }
-  } catch (error) {
-    logger.error('Error handling message:', error);
-    sendResponse({ success: false, error: (error as Error).message });
+  } catch (err) {
+    logger.error('Message handler error:', err);
+    sendResponse({ success: false, error: (err as Error).message });
     return false;
   }
 });
 
-// Extension installed
+// ─── Lifecycle ────────────────────────────────────────────────────────────────
+
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === 'install') {
-    logger.info('✅ Deepfake Detector installed!');
+    logger.info('✅ Installed');
     chrome.tabs.create({ url: 'https://meet.google.com/' });
   } else if (details.reason === 'update') {
-    logger.info('🔄 Extension updated to version', chrome.runtime.getManifest().version);
+    logger.info('🔄 Updated to', chrome.runtime.getManifest().version);
   }
 });
 
-// Clean up
 chrome.runtime.onSuspend.addListener(() => {
-  logger.info('Extension suspending, cleaning up...');
-  stopCapture();
+  logger.info('Suspending — cleaning up');
+  if (detectionStatus.isCapturing) stopCapture();
 });
 
-// Handle tab closed
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (detectionStatus.currentTab === tabId && detectionStatus.isCapturing) {
-    logger.info('Active tab closed, stopping capture');
+    logger.info('Active tab closed — stopping capture');
     stopCapture();
   }
 });
 
-// Handle navigation away
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (detectionStatus.currentTab === tabId && 
-      detectionStatus.isCapturing && 
-      changeInfo.url && 
-      !changeInfo.url.includes('meet.google.com')) {
-    logger.info('User navigated away from Meet, stopping capture');
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (
+    detectionStatus.currentTab === tabId &&
+    detectionStatus.isCapturing &&
+    changeInfo.url &&
+    !changeInfo.url.includes('meet.google.com')
+  ) {
+    logger.info('Navigated away from Meet — stopping');
     stopCapture();
+  }
+});
+
+// Listen for settings changes from settings page
+chrome.storage.onChanged.addListener((changes) => {
+  for (const [key, { newValue }] of Object.entries(changes)) {
+    if (key in userSettings) {
+      (userSettings as any)[key] = newValue;
+    }
   }
 });

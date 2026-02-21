@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Privacy Policy — Deepfake Detector</title>
+  <style>
+    body {
+      background: #0f172a; color: #cbd5e1;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 680px; margin: 0 auto; padding: 40px 20px;
+      line-height: 1.75;
+    }
+    h1 { color: #f1f5f9; font-size: 24px; margin-bottom: 8px; }
+    h2 { color: #94a3b8; font-size: 14px; font-weight: 500; margin-bottom: 32px; }
+    h3 { color: #e2e8f0; font-size: 16px; margin: 28px 0 8px; }
+    p  { margin-bottom: 12px; font-size: 14px; }
+    .badge {
+      display: inline-block;
+      background: rgba(16,185,129,0.15);
+      border: 1px solid #10b981;
+      color: #10b981;
+      border-radius: 6px;
+      padding: 2px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 24px;
+    }
+    a { color: #6366f1; }
+  </style>
+</head>
+<body>
+  <h1>🛡️ Deepfake Detector</h1>
+  <h2>Privacy Policy — Last updated February 2026</h2>
+  <div class="badge">Privacy-First by Design</div>
+
+  <h3>Summary</h3>
+  <p><strong>We never see your video.</strong> All deepfake analysis runs entirely inside your
+  browser using on-device AI. No video frames, images, or personal data are transmitted to any
+  server by default.</p>
+
+  <h3>What We Collect</h3>
+  <p>By default, this extension collects <strong>nothing</strong>. Optional features:</p>
+  <p><strong>Anonymous usage statistics (opt-in):</strong> If you enable this in Settings, we
+  collect only aggregate, non-identifiable counts such as "detection ran 5 times today". No
+  video data, no IP addresses, no user identifiers are included.</p>
+  <p><strong>Backend Validator (opt-in):</strong> If you enable the self-hosted backend feature,
+  individual frames are sent to <em>your own server</em>. Anthropic / the extension authors
+  never receive this data.</p>
+
+  <h3>Video Processing</h3>
+  <p>Video frames are processed using TensorFlow.js running entirely within the Chrome extension's
+  offscreen document. Frames are analyzed in memory and discarded immediately after inference.
+  They are never written to disk or transmitted over the network.</p>
+
+  <h3>Permissions Explained</h3>
+  <p><strong>tabCapture:</strong> Required to read the video stream of the active tab for analysis.
+  This is the core functionality of the extension.</p>
+  <p><strong>activeTab:</strong> Allows the extension to interact with the currently open tab
+  (e.g. detect video elements in Google Meet).</p>
+  <p><strong>storage:</strong> Saves your settings (sensitivity, FPS, etc.) locally in Chrome.
+  These never leave your device.</p>
+  <p><strong>scripting:</strong> Injects the overlay UI into Google Meet pages.</p>
+  <p><strong>offscreen:</strong> Creates a hidden document to process the video stream without
+  affecting your active tab's performance.</p>
+
+  <h3>Third-Party Services</h3>
+  <p>This extension does not integrate with any third-party analytics, advertising, or tracking
+  services. No data is sold or shared.</p>
+
+  <h3>Data Retention</h3>
+  <p>All in-memory data (video frames, detection scores) is discarded when you stop detection or
+  close the tab. Settings stored via <code>chrome.storage.sync</code> remain until you uninstall
+  the extension or clear extension data in Chrome settings.</p>
+
+  <h3>Contact</h3>
+  <p>Questions or concerns? Open an issue on our GitHub repository or email us at
+  <a href="mailto:privacy@deepfakedetector.example">privacy@deepfakedetector.example</a>.</p>
+</body>
+</html>
