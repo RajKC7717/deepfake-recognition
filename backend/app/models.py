@@ -29,8 +29,6 @@ _TRANSFORM = T.Compose([
 ])
 
 
-# ─── Architecture (mirrored from training/train_mesonet.py) ───────────────────
-
 class MesoInception4(nn.Module):
     def __init__(self, num_classes=2, dropout=0.5):
         super().__init__()
@@ -46,22 +44,25 @@ class MesoInception4(nn.Module):
         self.inc2_bn = nn.BatchNorm2d(12); self.inc2_pool = nn.MaxPool2d(2)
         self.conv3   = nn.Sequential(nn.Conv2d(12,16,5,padding=2), nn.ReLU(True), nn.BatchNorm2d(16), nn.MaxPool2d(2))
         self.conv4   = nn.Sequential(nn.Conv2d(16,16,5,padding=2), nn.ReLU(True), nn.BatchNorm2d(16), nn.MaxPool2d(4))
-        self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout), nn.Linear(16*7*7,16), nn.ReLU(True), nn.Dropout(dropout), nn.Linear(16,num_classes))
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(dropout),
+            nn.Linear(16*7*7, 16),
+            nn.ReLU(True),
+            nn.Dropout(dropout),
+            nn.Linear(16, num_classes),
+        )
 
-    def inc(self, x, b1,b2,b3,b4,bn,pool):
-        return pool(bn(torch.cat([b1(x),b2(x),b3(x),b4(x)],dim=1)))
+    def inc(self, x, b1, b2, b3, b4, bn, pool):
+        return pool(bn(torch.cat([b1(x), b2(x), b3(x), b4(x)], dim=1)))
 
     def forward(self, x):
-        x = self.inc(x,self.inc1_b1,self.inc1_b2,self.inc1_b3,self.inc1_b4,self.inc1_bn,self.inc1_pool)
-        x = self.inc(x,self.inc2_b1,self.inc2_b2,self.inc2_b3,self.inc2_b4,self.inc2_bn,self.inc2_pool)
+        x = self.inc(x, self.inc1_b1, self.inc1_b2, self.inc1_b3, self.inc1_b4, self.inc1_bn, self.inc1_pool)
+        x = self.inc(x, self.inc2_b1, self.inc2_b2, self.inc2_b3, self.inc2_b4, self.inc2_bn, self.inc2_pool)
         return self.classifier(self.conv4(self.conv3(x)))
 
 
-# ─── Wrapper ──────────────────────────────────────────────────────────────────
-
 class DeepfakeModel:
-    """Thin wrapper around MesoInception4 for inference."""
-
     def __init__(self, model: nn.Module, name: str, device: str):
         self.model  = model
         self.name   = name
@@ -69,22 +70,16 @@ class DeepfakeModel:
 
     @torch.no_grad()
     def predict(self, face_rgb: np.ndarray) -> float:
-        """
-        Args:
-            face_rgb: HxWx3 uint8 RGB numpy array
-        Returns:
-            Probability of being a deepfake (0.0 – 1.0)
-        """
         pil    = Image.fromarray(face_rgb)
         tensor = _TRANSFORM(pil).unsqueeze(0).to(self.device)
         logits = self.model(tensor)
         probs  = torch.softmax(logits, dim=1)
-        return probs[0, 1].item()   # probability of class 1 (fake)
+        return probs[0, 1].item()
 
 
 def get_deepfake_model() -> DeepfakeModel:
     device = (
-        "cuda" if torch.cuda.is_available()       else
+        "cuda" if torch.cuda.is_available()        else
         "mps"  if torch.backends.mps.is_available() else
         "cpu"
     )
@@ -93,10 +88,10 @@ def get_deepfake_model() -> DeepfakeModel:
     net = MesoInception4(num_classes=2)
 
     if MODEL_PATH.exists():
-        ckpt  = torch.load(MODEL_PATH, map_location=device)
+        ckpt  = torch.load(MODEL_PATH, map_location=device, weights_only=True)
         state = ckpt.get("model", ckpt)
         net.load_state_dict(state)
-        logger.info("✅ Loaded trained weights from %s", MODEL_PATH)
+        logger.info("✅ Loaded weights from %s", MODEL_PATH)
         name  = "MesoInception4-trained"
     else:
         logger.warning("⚠  No weights at %s — using random init!", MODEL_PATH)

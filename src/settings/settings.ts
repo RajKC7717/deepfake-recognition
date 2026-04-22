@@ -1,23 +1,11 @@
 /**
- * settings.ts — Persist and restore user settings via chrome.storage.sync
+ * src/settings/settings.ts
  */
 
-interface Settings {
-  sensitivity:     number;
-  fps:             number;
-  quality:         'low' | 'medium' | 'high';
-  autoStart:       boolean;
-  backendEnabled:  boolean;
-  backendUrl:      string;
-  analytics:       boolean;
-  notifyDanger:    boolean;
-  notifyWarning:   boolean;
-}
-
-const DEFAULTS: Settings = {
-  sensitivity:    5,
+const DEFAULTS = {
   fps:            5,
   quality:        'medium',
+  sensitivity:    5,
   autoStart:      false,
   backendEnabled: false,
   backendUrl:     'http://localhost:8000',
@@ -26,72 +14,94 @@ const DEFAULTS: Settings = {
   notifyWarning:  false,
 };
 
-// ── DOM helpers ────────────────────────────────────────────────────────────────
-const $  = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const el = {
-  sensitivity:    $<HTMLInputElement>('sensitivity'),
-  sensitivityVal: $<HTMLSpanElement>('sensitivity-val'),
-  fps:            $<HTMLSelectElement>('fps'),
-  quality:        $<HTMLSelectElement>('quality'),
-  autoStart:      $<HTMLInputElement>('auto-start'),
-  backendEnabled: $<HTMLInputElement>('backend-enabled'),
-  backendUrlRow:  $<HTMLDivElement>('backend-url-row'),
-  backendUrl:     $<HTMLInputElement>('backend-url'),
-  analytics:      $<HTMLInputElement>('analytics'),
-  notifyDanger:   $<HTMLInputElement>('notify-danger'),
-  notifyWarning:  $<HTMLInputElement>('notify-warning'),
-  saveBtn:        $<HTMLButtonElement>('save-btn'),
-  toast:          $<HTMLDivElement>('toast'),
-};
+// ─── Element refs — non-null asserted (elements are guaranteed in settings.html) ──
+const $fps            = document.getElementById('fps')             as HTMLSelectElement;
+const $quality        = document.getElementById('quality')         as HTMLSelectElement;
+const $sensitivity    = document.getElementById('sensitivity')     as HTMLInputElement;
+const $sensitivityVal = document.getElementById('sensitivity-val') as HTMLSpanElement;
+const $autoStart      = document.getElementById('auto-start')      as HTMLInputElement;
+const $backendEnabled = document.getElementById('backend-enabled') as HTMLInputElement;
+const $backendUrlRow  = document.getElementById('backend-url-row') as HTMLDivElement;
+const $backendUrl     = document.getElementById('backend-url')     as HTMLInputElement;
+const $analytics      = document.getElementById('analytics')       as HTMLInputElement;
+const $notifyDanger   = document.getElementById('notify-danger')   as HTMLInputElement;
+const $notifyWarning  = document.getElementById('notify-warning')  as HTMLInputElement;
+const $saveBtn        = document.getElementById('save-btn')        as HTMLButtonElement;
+const $toast          = document.getElementById('toast')           as HTMLDivElement;
 
-// ── Load ──────────────────────────────────────────────────────────────────────
-chrome.storage.sync.get(DEFAULTS, (stored: Settings) => {
-  el.sensitivity.value  = stored.sensitivity.toString();
-  el.sensitivityVal.textContent = stored.sensitivity.toString();
-  el.fps.value          = stored.fps.toString();
-  el.quality.value      = stored.quality;
-  el.autoStart.checked  = stored.autoStart;
-  el.backendEnabled.checked = stored.backendEnabled;
-  el.backendUrl.value   = stored.backendUrl;
-  el.analytics.checked  = stored.analytics;
-  el.notifyDanger.checked  = stored.notifyDanger;
-  el.notifyWarning.checked = stored.notifyWarning;
+// ─── Load saved settings → populate UI ────────────────────────────────────────
 
-  // Show/hide backend URL field
-  el.backendUrlRow.style.display = stored.backendEnabled ? 'flex' : 'none';
+chrome.storage.sync.get(DEFAULTS, (stored) => {
+  $fps.value                  = String(stored['fps']);
+  $quality.value              = stored['quality'] as string;
+  $sensitivity.value          = String(stored['sensitivity']);
+  $sensitivityVal.textContent = String(stored['sensitivity']);
+  $autoStart.checked          = stored['autoStart']      as boolean;
+  $backendEnabled.checked     = stored['backendEnabled'] as boolean;
+  $backendUrl.value           = stored['backendUrl']     as string;
+  $analytics.checked          = stored['analytics']      as boolean;
+  $notifyDanger.checked       = stored['notifyDanger']   as boolean;
+  $notifyWarning.checked      = stored['notifyWarning']  as boolean;
+
+  toggleBackendUrlRow(stored['backendEnabled'] as boolean);
 });
 
-// ── Reactive live updates ──────────────────────────────────────────────────────
-el.sensitivity.addEventListener('input', () => {
-  el.sensitivityVal.textContent = el.sensitivity.value;
+// ─── Live UI interactions ──────────────────────────────────────────────────────
+
+$sensitivity.addEventListener('input', () => {
+  $sensitivityVal.textContent = $sensitivity.value;
 });
 
-el.backendEnabled.addEventListener('change', () => {
-  el.backendUrlRow.style.display = el.backendEnabled.checked ? 'flex' : 'none';
+$backendEnabled.addEventListener('change', () => {
+  toggleBackendUrlRow($backendEnabled.checked);
 });
 
-// ── Save ──────────────────────────────────────────────────────────────────────
-el.saveBtn.addEventListener('click', () => {
-  const settings: Settings = {
-    sensitivity:    parseInt(el.sensitivity.value, 10),
-    fps:            parseInt(el.fps.value, 10),
-    quality:        el.quality.value as Settings['quality'],
-    autoStart:      el.autoStart.checked,
-    backendEnabled: el.backendEnabled.checked,
-    backendUrl:     el.backendUrl.value.trim().replace(/\/$/, ''),
-    analytics:      el.analytics.checked,
-    notifyDanger:   el.notifyDanger.checked,
-    notifyWarning:  el.notifyWarning.checked,
+function toggleBackendUrlRow(show: boolean): void {
+  $backendUrlRow.style.display = show ? 'flex' : 'none';
+}
+
+// ─── Save ──────────────────────────────────────────────────────────────────────
+
+$saveBtn.addEventListener('click', () => {
+  if ($backendEnabled.checked) {
+    const url = $backendUrl.value.trim();
+    if (!url || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+      $backendUrl.style.borderColor = '#ef4444';
+      $backendUrl.focus();
+      showToast('⚠️ Enter a valid backend URL', '#ef4444');
+      return;
+    }
+    $backendUrl.style.borderColor = '#334155';
+  }
+
+  const settings = {
+    fps:            Number($fps.value),
+    quality:        $quality.value,
+    sensitivity:    Number($sensitivity.value),
+    autoStart:      $autoStart.checked,
+    backendEnabled: $backendEnabled.checked,
+    backendUrl:     $backendUrl.value.trim() || DEFAULTS.backendUrl,
+    analytics:      $analytics.checked,
+    notifyDanger:   $notifyDanger.checked,
+    notifyWarning:  $notifyWarning.checked,
   };
 
   chrome.storage.sync.set(settings, () => {
-    // Notify background of setting changes
-    chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED', data: settings }).catch(() => {});
-    showToast();
+    if (chrome.runtime.lastError) {
+      showToast('❌ Save failed', '#ef4444');
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED', data: settings })
+      .catch(() => {});
+    showToast('✅ Settings saved!', '#10b981');
   });
 });
 
-function showToast() {
-  el.toast.classList.add('show');
-  setTimeout(() => el.toast.classList.remove('show'), 2500);
+// ─── Toast helper ──────────────────────────────────────────────────────────────
+
+function showToast(message: string, color = '#10b981'): void {
+  $toast.textContent      = message;
+  $toast.style.background = color;
+  $toast.classList.add('show');
+  setTimeout(() => $toast.classList.remove('show'), 2200);
 }

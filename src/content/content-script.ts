@@ -7,23 +7,20 @@ console.log('📹 Deepfake Detector content script loaded on:', window.location.
 const videoDetector = new VideoDetector();
 let currentVideoRegion: VideoRegion | null = null;
 
-// UI elements (your original references kept exactly)
+// UI elements
 let statusIndicator:   HTMLDivElement | null  = null;
 let frameCountDisplay: HTMLSpanElement | null = null;
 let confidenceDisplay: HTMLSpanElement | null = null;
+let trendDisplay:      HTMLSpanElement | null = null;
+let stabilityBar:      HTMLDivElement | null  = null;
 let threatIndicator:   HTMLDivElement | null  = null;
 let statusText:        HTMLDivElement | null  = null;
 let videoHighlight:    HTMLDivElement | null  = null;
 let videoStatusBadge:  HTMLDivElement | null  = null;
 let isIndicatorVisible = false;
 
-// Detection history for smoothed average
-let detectionHistory: number[] = [];
-const HISTORY_SIZE = 10;
-
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 
-// Check if detection already active when page loads
 chrome.runtime.sendMessage({ type: MessageType.GET_STATUS }, (response) => {
   if (response?.isCapturing) {
     console.log('Detection already active on page load, showing overlay');
@@ -31,8 +28,6 @@ chrome.runtime.sendMessage({ type: MessageType.GET_STATUS }, (response) => {
   }
 });
 
-// Start watching — uses new two-callback API (onFound + onLost)
-// onLost only fires after 3 consecutive missed scans (~9s), preventing flicker
 videoDetector.startWatching(
   (videos) => handleVideoFound(videos),
   ()       => handleVideoLost()
@@ -45,12 +40,11 @@ function handleVideoFound(videos: VideoRegion[]) {
     current.width * current.height > prev.width * prev.height ? current : prev
   );
 
-  // Only notify background if region actually changed
   const hasChanged =
     !currentVideoRegion ||
-    Math.abs(currentVideoRegion.x - largestVideo.x) > 10 ||
-    Math.abs(currentVideoRegion.y - largestVideo.y) > 10 ||
-    Math.abs(currentVideoRegion.width - largestVideo.width) > 10 ||
+    Math.abs(currentVideoRegion.x      - largestVideo.x)      > 10 ||
+    Math.abs(currentVideoRegion.y      - largestVideo.y)      > 10 ||
+    Math.abs(currentVideoRegion.width  - largestVideo.width)  > 10 ||
     Math.abs(currentVideoRegion.height - largestVideo.height) > 10;
 
   currentVideoRegion = largestVideo;
@@ -82,7 +76,6 @@ function handleVideoFound(videos: VideoRegion[]) {
 }
 
 function handleVideoLost() {
-  // Only called after 3 consecutive missed scans — not on every DOM flicker
   console.log('⚠️ Video truly lost (confirmed after multiple scans)');
   currentVideoRegion = null;
 
@@ -97,10 +90,8 @@ function handleVideoLost() {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   console.log('Content script received:', message.type);
 
-  // ── CHECK_VIDEO: always do a FRESH scan, never use cached state ────────────
-  // Called every time the popup opens or polls for video status
   if (message.type === 'CHECK_VIDEO') {
-    const videos = videoDetector.forceDetect(); // fresh live scan every time
+    const videos = videoDetector.forceDetect();
 
     if (videos.length > 0) {
       const largest = videos.reduce((p, c) =>
@@ -108,7 +99,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       );
       currentVideoRegion = largest;
 
-      // Keep background in sync with latest region
       chrome.runtime.sendMessage({
         type: MessageType.VIDEO_DETECTED,
         data: {
@@ -129,7 +119,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  // ── STATUS_UPDATE from background ─────────────────────────────────────────
   if (message.type === MessageType.STATUS_UPDATE) {
     const { status } = message.data;
 
@@ -144,7 +133,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
   }
 
-  // ── DETECTION_RESULT from AI ───────────────────────────────────────────────
   if (message.type === MessageType.DETECTION_RESULT) {
     updateDetectionResult(message.data as DetectionResult);
   }
@@ -157,7 +145,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
-// ─── Video Status Badge (your original, unchanged) ────────────────────────────
+// ─── Video Status Badge ───────────────────────────────────────────────────────
 
 function showVideoStatusBadge(videoDetected: boolean) {
   if (videoStatusBadge) videoStatusBadge.remove();
@@ -211,7 +199,6 @@ function showVideoStatusBadge(videoDetected: boolean) {
     }
   }, 10);
 
-  // Auto-hide after 5 seconds (unless detection is active)
   setTimeout(() => {
     if (videoStatusBadge && !isIndicatorVisible) {
       videoStatusBadge.style.opacity   = '0';
@@ -221,7 +208,7 @@ function showVideoStatusBadge(videoDetected: boolean) {
   }, 5000);
 }
 
-// ─── Video Highlight Box (your original, unchanged) ───────────────────────────
+// ─── Video Highlight Box ──────────────────────────────────────────────────────
 
 function showVideoHighlight(region: VideoRegion) {
   hideVideoHighlight();
@@ -278,7 +265,7 @@ function hideVideoHighlight() {
   }
 }
 
-// ─── Status Indicator Overlay (your original, unchanged) ─────────────────────
+// ─── Status Indicator Overlay ─────────────────────────────────────────────────
 
 function showStatusIndicator() {
   if (isIndicatorVisible && statusIndicator && document.body.contains(statusIndicator)) {
@@ -304,20 +291,28 @@ function showStatusIndicator() {
         <button id="minimize-btn" style="background: transparent; border: none; color: white; cursor: pointer; font-size: 16px; padding: 4px 8px; border-radius: 4px; transition: background 0.2s;" title="Minimize">−</button>
       </div>
 
-      <div id="threat-indicator" style="padding: 12px; border-radius: 8px; background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.2)); border: 2px solid #10b981; text-align: center; transition: all 0.3s;">
+      <div id="threat-indicator" style="padding: 12px; border-radius: 8px; background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.2)); border: 2px solid #10b981; text-align: center; transition: background 0.4s ease, border-color 0.3s ease;">
         <div style="font-size: 11px; color: rgba(255,255,255,0.7); margin-bottom: 4px;">AUTHENTICITY SCORE</div>
-        <div id="confidence-display" style="font-size: 32px; font-weight: bold; color: #10b981;">100%</div>
-        <div id="status-text" style="font-size: 12px; margin-top: 4px; color: #10b981; font-weight: 600;">✓ VERIFIED REAL</div>
+        <div style="display: flex; align-items: baseline; justify-content: center; gap: 6px;">
+          <div id="confidence-display" style="font-size: 32px; font-weight: bold; color: #10b981; transition: color 0.4s ease;">100%</div>
+          <div id="trend-display"      style="font-size: 16px; color: #10b981; transition: color 0.4s ease; line-height: 1;">→</div>
+        </div>
+        <div id="status-text" style="font-size: 12px; margin-top: 4px; color: #10b981; font-weight: 600; transition: color 0.4s ease;">✓ VERIFIED REAL</div>
+        <!-- Stability bar -->
+        <div style="margin-top: 8px; height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; overflow: hidden;">
+          <div id="stability-bar" style="height: 100%; width: 100%; background: #10b981; border-radius: 2px; transition: width 0.6s ease, background 0.4s ease;"></div>
+        </div>
+        <div style="font-size: 9px; color: rgba(255,255,255,0.35); margin-top: 3px; letter-spacing: 0.5px;">SIGNAL STABILITY</div>
       </div>
 
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12px; padding: 8px 0; border-top: 1px solid rgba(255,255,255,0.1);">
         <div>
           <div style="color: rgba(255,255,255,0.6); margin-bottom: 4px;">Frames</div>
-          <div id="frame-count" style="font-size: 16px; font-weight: bold; color: #10b981;">0</div>
+          <div id="frame-count" style="font-size: 16px; font-weight: bold; color: #10b981; transition: color 0.4s ease;">0</div>
         </div>
         <div>
-          <div style="color: rgba(255,255,255,0.6); margin-bottom: 4px;">Avg Score</div>
-          <div id="avg-score" style="font-size: 16px; font-weight: bold; color: #10b981;">100%</div>
+          <div style="color: rgba(255,255,255,0.6); margin-bottom: 4px;">Smoothed</div>
+          <div id="avg-score" style="font-size: 16px; font-weight: bold; color: #10b981; transition: color 0.4s ease;">100%</div>
         </div>
       </div>
 
@@ -365,6 +360,8 @@ function showStatusIndicator() {
 
   frameCountDisplay = statusIndicator.querySelector('#frame-count');
   confidenceDisplay = statusIndicator.querySelector('#confidence-display');
+  trendDisplay      = statusIndicator.querySelector('#trend-display');
+  stabilityBar      = statusIndicator.querySelector('#stability-bar');
   threatIndicator   = statusIndicator.querySelector('#threat-indicator');
   statusText        = statusIndicator.querySelector('#status-text');
 
@@ -375,22 +372,42 @@ function showStatusIndicator() {
   console.log('✅ AI-powered status indicator shown');
 }
 
-// ─── Detection result updater (your original, unchanged) ─────────────────────
+// ─── Detection result updater ─────────────────────────────────────────────────
+// Uses result.smoothedConfidence (from temporal-smoother) as single source of truth.
+// Local averaging deleted — no detectionHistory[], no HISTORY_SIZE.
 
 function updateDetectionResult(result: DetectionResult) {
   if (!isIndicatorVisible || !statusIndicator) return;
 
-  if (frameCountDisplay) frameCountDisplay.textContent = result.frameNumber.toString();
+  // smoothedConfidence is the EWMA+hysteresis value from the offscreen smoother.
+  // Fall back to raw confidence if a very old offscreen build sends the message
+  // before Chunk 3 lands — this guard can be removed once fully deployed.
+  const smoothed = result.smoothedConfidence ?? result.confidence;
+  const authenticityScore = Math.round((1 - smoothed) * 100);
 
-  const authenticityScore = Math.round((1 - result.confidence) * 100);
+  if (frameCountDisplay) frameCountDisplay.textContent = result.frameNumber.toString();
   if (confidenceDisplay) confidenceDisplay.textContent = `${authenticityScore}%`;
 
-  detectionHistory.push(authenticityScore);
-  if (detectionHistory.length > HISTORY_SIZE) detectionHistory.shift();
-  const avgScore = Math.round(detectionHistory.reduce((a, b) => a + b, 0) / detectionHistory.length);
+  // Smoothed score label — same value, explicit label changed from "Avg" to "Smoothed"
+  const avgScoreDisplay = statusIndicator.querySelector('#avg-score') as HTMLElement | null;
+  if (avgScoreDisplay) avgScoreDisplay.textContent = `${authenticityScore}%`;
 
-  const avgScoreDisplay = statusIndicator.querySelector('#avg-score');
-  if (avgScoreDisplay) avgScoreDisplay.textContent = `${avgScore}%`;
+  // Trend arrow — ↑ rising fake score (worse), ↓ falling fake score (better), → flat
+  if (trendDisplay) {
+    switch (result.trend) {
+      case 'rising':  trendDisplay.textContent = '↑'; break;
+      case 'falling': trendDisplay.textContent = '↓'; break;
+      default:        trendDisplay.textContent = '→'; break;
+    }
+  }
+
+  // Stability bar — result.stability is 0 (chaotic) to 1 (rock-steady)
+  if (stabilityBar) {
+    const stabilityPct = Math.round((result.stability ?? 1) * 100);
+    stabilityBar.style.width = `${stabilityPct}%`;
+    // Green when stable, amber when signal is noisy
+    stabilityBar.style.background = stabilityPct > 60 ? '#10b981' : '#f59e0b';
+  }
 
   if (threatIndicator && statusText && confidenceDisplay) {
     threatIndicator.classList.remove('threat-safe', 'threat-warning', 'threat-danger');
@@ -419,19 +436,20 @@ function updateDetectionResult(result: DetectionResult) {
     statusText.textContent        = statusMessage;
     statusText.style.color        = color;
     confidenceDisplay.style.color = color;
+    if (trendDisplay)      trendDisplay.style.color      = color;
+    if (frameCountDisplay) frameCountDisplay.style.color  = color;
+    if (avgScoreDisplay)   avgScoreDisplay.style.color    = color;
 
-    const pulseDot = statusIndicator.querySelector('#pulse-dot') as HTMLDivElement;
+    const pulseDot = statusIndicator.querySelector('#pulse-dot') as HTMLDivElement | null;
     if (pulseDot) pulseDot.style.background = color;
-    if (avgScoreDisplay) (avgScoreDisplay as HTMLElement).style.color = color;
-    if (frameCountDisplay) frameCountDisplay.style.color = color;
   }
 
   if (result.threatLevel !== 'safe') {
-    console.warn(`⚠️ Threat: ${result.classification} (${(result.confidence * 100).toFixed(1)}%)`);
+    console.warn(`⚠️ Threat: ${result.classification} | smoothed=${smoothed.toFixed(3)} | trend=${result.trend ?? '—'} | stability=${(result.stability ?? 1).toFixed(2)}`);
   }
 }
 
-// ─── Button handlers (your original, unchanged) ───────────────────────────────
+// ─── Button handlers ──────────────────────────────────────────────────────────
 
 function handleStopDetection() {
   console.log('🛑 Stop button clicked on overlay');
@@ -462,7 +480,6 @@ function handleMinimize() {
 
 function hideStatusIndicator() {
   console.log('Hiding status indicator...');
-  detectionHistory = [];
 
   if (statusIndicator && document.body.contains(statusIndicator)) {
     statusIndicator.style.transition = 'opacity 0.3s, transform 0.3s';
@@ -471,13 +488,15 @@ function hideStatusIndicator() {
     setTimeout(() => {
       if (statusIndicator) {
         statusIndicator.remove();
-        statusIndicator = frameCountDisplay = confidenceDisplay = threatIndicator = statusText = null;
+        statusIndicator = frameCountDisplay = confidenceDisplay = trendDisplay =
+          stabilityBar = threatIndicator = statusText = null;
         isIndicatorVisible = false;
         console.log('✅ Status indicator removed from DOM');
       }
     }, 300);
   } else {
-    statusIndicator = frameCountDisplay = confidenceDisplay = threatIndicator = statusText = null;
+    statusIndicator = frameCountDisplay = confidenceDisplay = trendDisplay =
+      stabilityBar = threatIndicator = statusText = null;
     isIndicatorVisible = false;
   }
   hideVideoHighlight();

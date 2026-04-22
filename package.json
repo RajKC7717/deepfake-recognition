@@ -22,7 +22,7 @@
   },
   "homepage": "https://github.com/RajKC7717/deepfake-recognition#readme",
   "devDependencies": {
-    "@types/chrome": "^0.1.36",
+    "@types/chrome": "^0.1.40",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "copy-webpack-plugin": "^13.0.1",

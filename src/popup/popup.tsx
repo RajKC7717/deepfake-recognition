@@ -5,21 +5,20 @@ import { MessageType, DetectionStatus, DetectionResult } from '../utils/types';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type VideoState = 'checking' | 'not-found' | 'found' | 'not-meet';
-type AppState = 'idle' | 'starting' | 'active' | 'stopping';
+type AppState   = 'idle' | 'starting' | 'active' | 'stopping';
 
 interface PopupState {
-  appState: AppState;
-  videoState: VideoState;
-  modelLoaded: boolean;
-  framesProcessed: number;
-  latestResult: DetectionResult | null;
-  averageConfidence: number | null;
-  activeTabId: number | null;
-  isMeetTab: boolean;
-  backend: string;
+  appState:          AppState;
+  videoState:        VideoState;
+  modelLoaded:       boolean;
+  framesProcessed:   number;
+  latestResult:      DetectionResult | null;
+  activeTabId:       number | null;
+  isMeetTab:         boolean;
+  backend:           string;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getThreatColor(level: string): string {
   switch (level) {
@@ -37,36 +36,35 @@ function getAuthenticityScore(confidence: number): number {
 
 const PulseDot = ({ color = '#10b981', animate = true }: { color?: string; animate?: boolean }) => (
   <span style={{
-    display: 'inline-block',
-    width: 8,
-    height: 8,
-    borderRadius: '50%',
-    background: color,
-    animation: animate ? 'pulse 2s infinite' : 'none',
-    flexShrink: 0,
+    display:     'inline-block',
+    width:       8,
+    height:      8,
+    borderRadius:'50%',
+    background:  color,
+    animation:   animate ? 'pulse 2s infinite' : 'none',
+    flexShrink:  0,
   }} />
 );
 
 const VideoStatusBadge = ({ state }: { state: VideoState }) => {
   const config: Record<VideoState, { icon: string; label: string; color: string; bg: string }> = {
-    checking:  { icon: '⏳', label: 'Checking for video...', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' },
-    'not-found': { icon: '⚠️', label: 'No video detected',     color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
-    found:     { icon: '✅', label: 'Video detected',          color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
-    'not-meet':{ icon: '🔗', label: 'Open Google Meet first',  color: '#6366f1', bg: 'rgba(99,102,241,0.1)' },
+    checking:    { icon: '⏳', label: 'Checking for video...', color: '#94a3b8', bg: 'rgba(148,163,184,0.1)' },
+    'not-found': { icon: '⚠️', label: 'No video detected',     color: '#f59e0b', bg: 'rgba(245,158,11,0.1)'  },
+    found:       { icon: '✅', label: 'Video detected',         color: '#10b981', bg: 'rgba(16,185,129,0.1)'  },
+    'not-meet':  { icon: '🔗', label: 'Open Google Meet first', color: '#6366f1', bg: 'rgba(99,102,241,0.1)'  },
   };
   const c = config[state];
-
   return (
     <div style={{
-      display: 'flex',
+      display:    'flex',
       alignItems: 'center',
-      gap: 8,
-      padding: '8px 12px',
+      gap:        8,
+      padding:    '8px 12px',
       borderRadius: 8,
       background: c.bg,
-      border: `1px solid ${c.color}33`,
-      fontSize: 12,
-      color: c.color,
+      border:     `1px solid ${c.color}33`,
+      fontSize:   12,
+      color:      c.color,
       fontWeight: 500,
     }}>
       <span>{c.icon}</span>
@@ -77,59 +75,102 @@ const VideoStatusBadge = ({ state }: { state: VideoState }) => {
 
 const ModelBadge = ({ loaded, backend }: { loaded: boolean; backend: string }) => (
   <div style={{
-    display: 'flex',
+    display:    'flex',
     alignItems: 'center',
-    gap: 6,
-    fontSize: 11,
-    color: loaded ? '#10b981' : '#94a3b8',
+    gap:        6,
+    fontSize:   11,
+    color:      loaded ? '#10b981' : '#94a3b8',
   }}>
     <PulseDot color={loaded ? '#10b981' : '#94a3b8'} animate={!loaded} />
     {loaded ? `AI Ready · ${backend.toUpperCase()}` : 'Loading AI model...'}
   </div>
 );
 
+// ─── ThreatMeter — now includes trend arrow + stability bar ──────────────────
+
 const ThreatMeter = ({ result }: { result: DetectionResult }) => {
-  const score = getAuthenticityScore(result.confidence);
-  const color = getThreatColor(result.threatLevel);
+  // Use smoothedConfidence as single source of truth (falls back to raw if old build)
+  const smoothed = result.smoothedConfidence ?? result.confidence;
+  const score    = getAuthenticityScore(smoothed);
+  const color    = getThreatColor(result.threatLevel);
+
   const labels: Record<string, string> = {
-    safe: '✓ VERIFIED REAL',
+    safe:    '✓ VERIFIED REAL',
     warning: '⚠ SUSPICIOUS',
-    danger: '🚨 DEEPFAKE DETECTED',
+    danger:  '🚨 DEEPFAKE DETECTED',
   };
+
+  // Trend arrow: ↑ = fake score rising (worse), ↓ = falling (better), → = flat
+  const trendArrow =
+    result.trend === 'rising'  ? '↑' :
+    result.trend === 'falling' ? '↓' : '→';
+
+  // Stability: 0 = chaotic signal, 1 = rock-steady
+  const stabilityPct = Math.round((result.stability ?? 1) * 100);
+  const stabilityColor = stabilityPct > 60 ? '#10b981' : '#f59e0b';
 
   return (
     <div style={{
-      padding: '12px 16px',
+      padding:    '12px 16px',
       borderRadius: 10,
-      border: `2px solid ${color}`,
+      border:     `2px solid ${color}`,
       background: `${color}15`,
-      textAlign: 'center',
-      transition: 'all 0.4s ease',
+      textAlign:  'center',
+      transition: 'border-color 0.3s ease, background 0.4s ease',
     }}>
       <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 4, letterSpacing: 1 }}>
         AUTHENTICITY SCORE
       </div>
-      <div style={{ fontSize: 36, fontWeight: 800, color, lineHeight: 1 }}>
-        {score}%
+
+      {/* Score + trend arrow on same line */}
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 6 }}>
+        <div style={{ fontSize: 36, fontWeight: 800, color, lineHeight: 1, transition: 'color 0.4s ease' }}>
+          {score}%
+        </div>
+        <div style={{ fontSize: 18, color, fontWeight: 700, lineHeight: 1, transition: 'color 0.4s ease' }}>
+          {trendArrow}
+        </div>
       </div>
-      <div style={{ fontSize: 11, fontWeight: 700, color, marginTop: 4 }}>
+
+      <div style={{ fontSize: 11, fontWeight: 700, color, marginTop: 4, transition: 'color 0.4s ease' }}>
         {labels[result.threatLevel]}
       </div>
-      {/* Progress bar */}
+
+      {/* Authenticity progress bar */}
       <div style={{
-        marginTop: 8,
-        height: 4,
-        background: 'rgba(255,255,255,0.1)',
+        marginTop:    8,
+        height:       4,
+        background:   'rgba(255,255,255,0.1)',
         borderRadius: 2,
-        overflow: 'hidden',
+        overflow:     'hidden',
       }}>
         <div style={{
-          height: '100%',
-          width: `${score}%`,
+          height:     '100%',
+          width:      `${score}%`,
           background: color,
           borderRadius: 2,
-          transition: 'width 0.5s ease',
+          transition: 'width 0.5s ease, background 0.4s ease',
         }} />
+      </div>
+
+      {/* Stability bar */}
+      <div style={{
+        marginTop:    6,
+        height:       3,
+        background:   'rgba(255,255,255,0.06)',
+        borderRadius: 2,
+        overflow:     'hidden',
+      }}>
+        <div style={{
+          height:     '100%',
+          width:      `${stabilityPct}%`,
+          background: stabilityColor,
+          borderRadius: 2,
+          transition: 'width 0.6s ease, background 0.4s ease',
+        }} />
+      </div>
+      <div style={{ fontSize: 9, color: '#475569', marginTop: 3, letterSpacing: 0.5 }}>
+        SIGNAL STABILITY {stabilityPct}%
       </div>
     </div>
   );
@@ -137,14 +178,14 @@ const ThreatMeter = ({ result }: { result: DetectionResult }) => {
 
 const StatPill = ({ label, value, color = '#10b981' }: { label: string; value: string; color?: string }) => (
   <div style={{
-    flex: 1,
-    padding: '8px 12px',
+    flex:       1,
+    padding:    '8px 12px',
     background: 'rgba(255,255,255,0.04)',
     borderRadius: 8,
-    border: '1px solid rgba(255,255,255,0.08)',
+    border:     '1px solid rgba(255,255,255,0.08)',
   }}>
     <div style={{ fontSize: 10, color: '#64748b', marginBottom: 2 }}>{label}</div>
-    <div style={{ fontSize: 16, fontWeight: 700, color }}>{value}</div>
+    <div style={{ fontSize: 16, fontWeight: 700, color, transition: 'color 0.4s ease' }}>{value}</div>
   </div>
 );
 
@@ -152,18 +193,17 @@ const StatPill = ({ label, value, color = '#10b981' }: { label: string; value: s
 
 function Popup() {
   const [state, setState] = useState<PopupState>({
-    appState: 'idle',
-    videoState: 'checking',
-    modelLoaded: false,
+    appState:        'idle',
+    videoState:      'checking',
+    modelLoaded:     false,
     framesProcessed: 0,
-    latestResult: null,
-    averageConfidence: null,
-    activeTabId: null,
-    isMeetTab: false,
-    backend: 'webgl',
+    latestResult:    null,
+    activeTabId:     null,
+    isMeetTab:       false,
+    backend:         'webgl',
   });
 
-  // ── Boot: get current tab and check if it's Meet ──────────────────────────
+  // ── Boot: get current tab, check if it's Meet ─────────────────────────────
   useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       const tab = tabs[0];
@@ -173,19 +213,18 @@ function Popup() {
       setState(s => ({
         ...s,
         activeTabId: tab.id!,
-        isMeetTab: isMeet,
-        videoState: isMeet ? 'checking' : 'not-meet',
+        isMeetTab:   isMeet,
+        videoState:  isMeet ? 'checking' : 'not-meet',
       }));
 
-      // Check background status (may already be capturing)
       chrome.runtime.sendMessage({ type: MessageType.GET_STATUS }, (status: DetectionStatus) => {
         if (status?.isCapturing) {
           setState(s => ({
             ...s,
-            appState: 'active',
+            appState:        'active',
             framesProcessed: status.framesProcessed,
-            modelLoaded: !!status.modelLoaded,
-            videoState: status.videoRegionDetected ? 'found' : s.videoState,
+            modelLoaded:     !!status.modelLoaded,
+            videoState:      status.videoRegionDetected ? 'found' : s.videoState,
           }));
         }
         if (status?.modelLoaded) {
@@ -193,14 +232,11 @@ function Popup() {
         }
       });
 
-      // If on Meet, check for video element
-      if (isMeet) {
-        checkForVideo(tab.id!);
-      }
+      if (isMeet) checkForVideo(tab.id!);
     });
   }, []);
 
-  // ── Poll for video detection every 2s when idle on Meet ──────────────────
+  // ── Poll video detection every 2s when idle on Meet ───────────────────────
   useEffect(() => {
     if (!state.isMeetTab || state.appState !== 'idle') return;
     const interval = setInterval(() => {
@@ -209,20 +245,17 @@ function Popup() {
     return () => clearInterval(interval);
   }, [state.isMeetTab, state.appState, state.activeTabId]);
 
-  // ── Listen for messages from background ─────────────────────────────────
+  // ── Messages from background ──────────────────────────────────────────────
   useEffect(() => {
     const handler = (message: any) => {
       if (message.type === MessageType.DETECTION_RESULT) {
         const result: DetectionResult = message.data;
-        setState(s => {
-          const prev = s.averageConfidence ?? result.confidence;
-          return {
-            ...s,
-            latestResult: result,
-            framesProcessed: result.frameNumber,
-            averageConfidence: prev * 0.85 + result.confidence * 0.15,
-          };
-        });
+        setState(s => ({
+          ...s,
+          latestResult:    result,
+          framesProcessed: result.frameNumber,
+          // No local EMA — smoothedConfidence from temporal-smoother is the truth
+        }));
       }
       if (message.type === MessageType.MODEL_READY) {
         setState(s => ({ ...s, modelLoaded: true, backend: message.data?.backend ?? 'webgl' }));
@@ -238,11 +271,10 @@ function Popup() {
     return () => chrome.runtime.onMessage.removeListener(handler);
   }, []);
 
-  // ── Check video in content script ────────────────────────────────────────
+  // ── Check video in content script ─────────────────────────────────────────
   const checkForVideo = useCallback((tabId: number) => {
     chrome.tabs.sendMessage(tabId, { type: 'CHECK_VIDEO' }, (response) => {
       if (chrome.runtime.lastError) {
-        // Content script not ready yet
         setState(s => ({ ...s, videoState: 'not-found' }));
         return;
       }
@@ -253,21 +285,19 @@ function Popup() {
     });
   }, []);
 
-  // ── Start protection ──────────────────────────────────────────────────────
+  // ── Start protection ───────────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
     if (!state.activeTabId || state.videoState !== 'found') return;
     setState(s => ({ ...s, appState: 'starting' }));
-
     chrome.runtime.sendMessage(
       { type: MessageType.START_CAPTURE, data: { tabId: state.activeTabId } },
       (response) => {
         if (response?.success) {
           setState(s => ({
             ...s,
-            appState: 'active',
+            appState:        'active',
             framesProcessed: 0,
-            latestResult: null,
-            averageConfidence: null,
+            latestResult:    null,
           }));
         } else {
           setState(s => ({ ...s, appState: 'idle' }));
@@ -276,15 +306,14 @@ function Popup() {
     );
   }, [state.activeTabId, state.videoState]);
 
-  // ── Stop protection ───────────────────────────────────────────────────────
+  // ── Stop protection ────────────────────────────────────────────────────────
   const handleStop = useCallback(() => {
     setState(s => ({ ...s, appState: 'stopping' }));
     chrome.runtime.sendMessage({ type: MessageType.STOP_CAPTURE }, () => {
       setState(s => ({
         ...s,
-        appState: 'idle',
-        latestResult: null,
-        averageConfidence: null,
+        appState:        'idle',
+        latestResult:    null,
         framesProcessed: 0,
       }));
     });
@@ -293,24 +322,37 @@ function Popup() {
   // ── Render ────────────────────────────────────────────────────────────────
   const canStart = state.videoState === 'found' && state.isMeetTab && state.appState === 'idle';
   const isActive = state.appState === 'active';
-  const color = state.latestResult ? getThreatColor(state.latestResult.threatLevel) : '#10b981';
+
+  // Derive display color from latest result (or default green)
+  const color = state.latestResult
+    ? getThreatColor(state.latestResult.threatLevel)
+    : '#10b981';
+
+  // Smoothed confidence as single source of truth for stat pills
+  const smoothed    = state.latestResult
+    ? (state.latestResult.smoothedConfidence ?? state.latestResult.confidence)
+    : null;
+  const smoothedStr = smoothed !== null
+    ? `${getAuthenticityScore(smoothed)}%`
+    : '—';
 
   return (
     <div style={{
-      width: 320,
+      width:      320,
       background: '#0f172a',
-      color: '#f1f5f9',
+      color:      '#f1f5f9',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       borderRadius: 12,
-      overflow: 'hidden',
+      overflow:   'hidden',
     }}>
+
       {/* Header */}
       <div style={{
-        padding: '14px 16px 12px',
-        background: 'linear-gradient(135deg, #1e293b, #0f172a)',
+        padding:      '14px 16px 12px',
+        background:   'linear-gradient(135deg, #1e293b, #0f172a)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
-        display: 'flex',
-        alignItems: 'center',
+        display:      'flex',
+        alignItems:   'center',
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -320,11 +362,14 @@ function Popup() {
             <ModelBadge loaded={state.modelLoaded} backend={state.backend} />
           </div>
         </div>
-
         {isActive && (
           <div style={{
-            display: 'flex', alignItems: 'center', gap: 5,
-            fontSize: 11, color: '#10b981', fontWeight: 600,
+            display:    'flex',
+            alignItems: 'center',
+            gap:        5,
+            fontSize:   11,
+            color:      '#10b981',
+            fontWeight: 600,
           }}>
             <PulseDot color="#10b981" />
             LIVE
@@ -335,16 +380,15 @@ function Popup() {
       {/* Body */}
       <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-        {/* Video status — always visible */}
         <VideoStatusBadge state={state.videoState} />
 
-        {/* Not on Meet — CTA */}
+        {/* Not on Meet */}
         {!state.isMeetTab && (
           <div style={{
-            textAlign: 'center',
-            padding: '20px 12px',
-            color: '#64748b',
-            fontSize: 12,
+            textAlign:  'center',
+            padding:    '20px 12px',
+            color:      '#64748b',
+            fontSize:   12,
             lineHeight: 1.6,
           }}>
             Navigate to <strong style={{ color: '#6366f1' }}>meet.google.com</strong> and join
@@ -352,46 +396,37 @@ function Popup() {
           </div>
         )}
 
-        {/* On Meet, idle: show start button */}
+        {/* On Meet, idle */}
         {state.isMeetTab && !isActive && (
           <>
-            {/* Start button */}
             <button
               onClick={handleStart}
               disabled={!canStart || state.appState === 'starting'}
               style={{
-                width: '100%',
-                padding: '12px 0',
+                width:      '100%',
+                padding:    '12px 0',
                 borderRadius: 10,
-                border: 'none',
-                fontSize: 14,
+                border:     'none',
+                fontSize:   14,
                 fontWeight: 700,
-                cursor: canStart ? 'pointer' : 'not-allowed',
+                cursor:     canStart ? 'pointer' : 'not-allowed',
                 transition: 'all 0.2s ease',
                 background: canStart
                   ? 'linear-gradient(135deg, #10b981, #059669)'
                   : 'rgba(255,255,255,0.06)',
-                color: canStart ? '#fff' : '#475569',
-                boxShadow: canStart ? '0 4px 16px rgba(16,185,129,0.3)' : 'none',
+                color:      canStart ? '#fff' : '#475569',
+                boxShadow:  canStart ? '0 4px 16px rgba(16,185,129,0.3)' : 'none',
               }}
             >
-              {state.appState === 'starting' ? (
-                '⏳ Starting...'
-              ) : state.videoState === 'checking' ? (
-                '⏳ Waiting for video...'
-              ) : state.videoState === 'not-found' ? (
-                '⚠ No video — join a call first'
-              ) : state.videoState === 'not-meet' ? (
-                '🔗 Open Google Meet'
-              ) : (
-                '▶ Start Protection'
-              )}
+              {state.appState === 'starting' ? '⏳ Starting...'                  :
+               state.videoState === 'checking'  ? '⏳ Waiting for video...'      :
+               state.videoState === 'not-found' ? '⚠ No video — join a call first' :
+               state.videoState === 'not-meet'  ? '🔗 Open Google Meet'          :
+               '▶ Start Protection'}
             </button>
-
-            {/* Helper hint */}
             {state.videoState === 'found' && (
               <p style={{ margin: 0, fontSize: 11, color: '#475569', textAlign: 'center' }}>
-                Video detected ✓  — click Start to begin AI analysis
+                Video detected ✓ — click Start to begin AI analysis
               </p>
             )}
             {state.videoState === 'not-found' && state.isMeetTab && (
@@ -402,25 +437,25 @@ function Popup() {
           </>
         )}
 
-        {/* Active — show live results */}
+        {/* Active — live results */}
         {isActive && (
           <>
             {state.latestResult ? (
               <ThreatMeter result={state.latestResult} />
             ) : (
               <div style={{
-                padding: '20px',
-                textAlign: 'center',
-                color: '#475569',
-                fontSize: 12,
-                border: '1px dashed rgba(255,255,255,0.08)',
+                padding:    '20px',
+                textAlign:  'center',
+                color:      '#475569',
+                fontSize:   12,
+                border:     '1px dashed rgba(255,255,255,0.08)',
                 borderRadius: 10,
               }}>
                 ⏳ Analyzing frames...
               </div>
             )}
 
-            {/* Stats row */}
+            {/* Stats row — Smoothed replaces Avg */}
             <div style={{ display: 'flex', gap: 8 }}>
               <StatPill
                 label="Frames"
@@ -428,10 +463,8 @@ function Popup() {
                 color={color}
               />
               <StatPill
-                label="Avg Score"
-                value={state.averageConfidence !== null
-                  ? `${getAuthenticityScore(state.averageConfidence)}%`
-                  : '—'}
+                label="Smoothed"
+                value={smoothedStr}
                 color={color}
               />
               <StatPill
@@ -441,20 +474,20 @@ function Popup() {
               />
             </div>
 
-            {/* Stop button */}
+            {/* Stop */}
             <button
               onClick={handleStop}
               disabled={state.appState === 'stopping'}
               style={{
-                width: '100%',
-                padding: '11px 0',
+                width:      '100%',
+                padding:    '11px 0',
                 borderRadius: 10,
-                border: '1px solid rgba(239,68,68,0.4)',
-                fontSize: 13,
+                border:     '1px solid rgba(239,68,68,0.4)',
+                fontSize:   13,
                 fontWeight: 700,
-                cursor: 'pointer',
+                cursor:     'pointer',
                 background: 'rgba(239,68,68,0.1)',
-                color: '#ef4444',
+                color:      '#ef4444',
                 transition: 'all 0.2s ease',
               }}
             >
@@ -466,24 +499,22 @@ function Popup() {
 
       {/* Footer */}
       <div style={{
-        padding: '8px 16px 12px',
-        display: 'flex',
+        padding:        '8px 16px 12px',
+        display:        'flex',
         justifyContent: 'space-between',
-        alignItems: 'center',
-        borderTop: '1px solid rgba(255,255,255,0.05)',
+        alignItems:     'center',
+        borderTop:      '1px solid rgba(255,255,255,0.05)',
       }}>
-        <span style={{ fontSize: 10, color: '#334155' }}>
-          Deepfake Detector v0.2.0
-        </span>
+        <span style={{ fontSize: 10, color: '#334155' }}>Deepfake Detector v0.2.0</span>
         <button
           onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL('settings.html') })}
           style={{
             background: 'transparent',
-            border: 'none',
-            color: '#475569',
-            fontSize: 11,
-            cursor: 'pointer',
-            padding: '2px 6px',
+            border:     'none',
+            color:      '#475569',
+            fontSize:   11,
+            cursor:     'pointer',
+            padding:    '2px 6px',
             borderRadius: 4,
           }}
         >
