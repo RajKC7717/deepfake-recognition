@@ -282,12 +282,12 @@ async function detectFaceOnCanvas(sourceCanvas: HTMLCanvasElement): Promise<{
 
     if (sw < 10 || sh < 10) return { detected: false, count: 0 };
 
-    // Crop face to faceCanvas at 224×224 (model input size)
-    faceCanvas.width  = 224;
-    faceCanvas.height = 224;
-    faceCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, 224, 224);
+    // Crop face to faceCanvas at 256x256 (model input size)
+    faceCanvas.width  = 256;
+    faceCanvas.height = 256;
+    faceCtx.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, 256, 256);
 
-    const croppedImageData = faceCtx.getImageData(0, 0, 224, 224);
+    const croppedImageData = faceCtx.getImageData(0, 0, 256, 256);
 
     return {
       detected:         true,

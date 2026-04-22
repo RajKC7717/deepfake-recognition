@@ -9,7 +9,7 @@ export class DeepfakeDetectorModel {
   private model: tf.LayersModel | null = null;
   private isLoaded: boolean = false;
   private backend: string = 'webgl';
-  private inputSize: number = 224;
+  private inputSize: number = 256;
 
   constructor() {}
 
@@ -131,13 +131,14 @@ export class DeepfakeDetectorModel {
         tf.layers.dropout({ rate: 0.5 }),
         tf.layers.dense({ units: 16, activation: 'relu' }),
         tf.layers.dropout({ rate: 0.5 }),
-        tf.layers.dense({ units: 2, activation: 'softmax' })
+        // Real MesoNet uses 1 unit sigmoid, not 2 unit softmax
+        tf.layers.dense({ units: 1, activation: 'sigmoid' })
       ]
     });
 
     model.compile({
       optimizer: tf.train.adam(0.001),
-      loss: 'categoricalCrossentropy',
+      loss: 'meanSquaredError',
       metrics: ['accuracy']
     });
 
@@ -183,7 +184,9 @@ export class DeepfakeDetectorModel {
       const prediction = this.model!.predict(tensor) as tf.Tensor;
       const probabilities = prediction.dataSync();
       
-      const fakeScore = probabilities[1];
+      // MesoNet output: [0, 1]. >0.5 usually means fake, <0.5 means real.
+      // But we map fakeScore -> 0.0=real, 1.0=fake
+      const fakeScore = probabilities[0];
       const inferenceTime = performance.now() - startTime;
       
       logger.debug(`Inference: ${inferenceTime.toFixed(2)}ms, Fake: ${(fakeScore * 100).toFixed(1)}%`);

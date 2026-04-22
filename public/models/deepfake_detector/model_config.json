@@ -1,0 +1,17 @@
+{
+  "modelPath": "models/deepfake_detector/model.json",
+  "inputSize": 256,
+  "threshold": {
+    "safe": 0.3,
+    "warning": 0.6,
+    "danger": 0.8
+  },
+  "labels": [
+    "real",
+    "fake"
+  ],
+  "version": "1.0.0",
+  "architecture": "MesoInception4",
+  "outputType": "sigmoid",
+  "notes": "Single sigmoid output. >0.5 = fake, <0.5 = real."
+}
